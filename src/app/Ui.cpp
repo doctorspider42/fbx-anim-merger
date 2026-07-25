@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <set>
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -371,6 +372,20 @@ void Application::DrawScenePanel() {
         row("Vertices", std::to_string(m_model.totalVertices));
         row("Bones", std::to_string(m_model.skeleton.bones.size()));
         row("Materials", std::to_string(m_model.materials.size()));
+
+        std::set<std::string> textureKeys;
+        int embeddedCount = 0;
+        for (const Material& material : m_model.materials) {
+            for (const TextureSource* source : {&material.baseColorTexture, &material.normalTexture}) {
+                if (source->Empty()) continue;
+                if (textureKeys.insert(source->Key()).second && source->Embedded()) ++embeddedCount;
+            }
+        }
+        row("Textures", textureKeys.empty()
+                            ? std::string("none")
+                            : std::to_string(textureKeys.size()) + " (" +
+                                  std::to_string(embeddedCount) + " embedded)");
+
         row("Clips", std::to_string(m_model.animations.size()));
         ImGui::EndTable();
     }

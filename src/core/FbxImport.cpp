@@ -77,8 +77,27 @@ void NormalizeInfluences(Vertex& v) {
     }
 }
 
-std::string ResolveTexturePath(const ufbx_texture* tex, const fs::path& fbxDir) {
-    if (!tex) return {};
+// FBX stores whatever separator the authoring machine used, so neither
+// fs::path::filename nor a single delimiter is reliable here.
+std::string BaseName(const std::string& path) {
+    const size_t pos = path.find_last_of("/\\");
+    return pos == std::string::npos ? path : path.substr(pos + 1);
+}
+
+TextureSource MakeTextureSource(const ufbx_texture* tex, const fs::path& fbxDir) {
+    TextureSource out;
+    if (!tex) return out;
+
+    const std::string filename = ToStd(tex->filename);
+    out.name = filename.empty() ? ToStd(tex->name) : BaseName(filename);
+
+    // Embedded content wins: it is guaranteed to be the right image, whereas the
+    // recorded paths routinely point at a machine we have never seen.
+    if (tex->content.size > 0 && tex->content.data != nullptr) {
+        const auto* bytes = static_cast<const uint8_t*>(tex->content.data);
+        out.content = std::make_shared<const std::vector<uint8_t>>(bytes, bytes + tex->content.size);
+        return out;
+    }
 
     auto tryPath = [](const fs::path& p) -> std::string {
         std::error_code ec;
@@ -86,23 +105,37 @@ std::string ResolveTexturePath(const ufbx_texture* tex, const fs::path& fbxDir) 
         return {};
     };
 
-    std::string absolute = ToStd(tex->absolute_filename);
-    if (std::string r = tryPath(absolute); !r.empty()) return r;
-
-    std::string relative = ToStd(tex->relative_filename);
-    if (!relative.empty()) {
-        if (std::string r = tryPath(fbxDir / relative); !r.empty()) return r;
+    if (std::string r = tryPath(ToStd(tex->absolute_filename)); !r.empty()) {
+        out.path = r;
+        return out;
     }
 
-    std::string filename = ToStd(tex->filename);
-    if (!filename.empty()) {
-        if (std::string r = tryPath(filename); !r.empty()) return r;
-        const fs::path base = fs::path(filename).filename();
-        for (const char* sub : {"", "textures", "Textures", "tex", "maps"}) {
-            if (std::string r = tryPath(fbxDir / sub / base); !r.empty()) return r;
+    const std::string relative = ToStd(tex->relative_filename);
+    if (!relative.empty()) {
+        if (std::string r = tryPath(fbxDir / relative); !r.empty()) {
+            out.path = r;
+            return out;
         }
     }
-    return {};
+
+    if (!filename.empty()) {
+        if (std::string r = tryPath(filename); !r.empty()) {
+            out.path = r;
+            return out;
+        }
+        for (const char* sub : {"", "textures", "Textures", "tex", "maps"}) {
+            if (std::string r = tryPath(fbxDir / sub / out.name); !r.empty()) {
+                out.path = r;
+                return out;
+            }
+        }
+    }
+
+    if (!out.name.empty()) {
+        LogWarn("Texture '%s' is neither embedded nor found on disk - skipped.", out.name.c_str());
+    }
+    out.name.clear();
+    return out;
 }
 
 // --------------------------------------------------------------- node import
@@ -187,9 +220,17 @@ void ImportMaterials(const ufbx_scene* scene, const fs::path& fbxDir, Model& out
             mat.opacity = static_cast<float>(src->pbr.opacity.value_real);
         }
 
-        const ufbx_texture* tex = src->pbr.base_color.texture;
-        if (!tex) tex = src->fbx.diffuse_color.texture;
-        mat.baseColorTexture = ResolveTexturePath(tex, fbxDir);
+        const ufbx_texture* baseColor = src->pbr.base_color.texture;
+        if (!baseColor) baseColor = src->fbx.diffuse_color.texture;
+        mat.baseColorTexture = MakeTextureSource(baseColor, fbxDir);
+
+        const ufbx_texture* normal = src->pbr.normal_map.texture;
+        if (!normal) normal = src->fbx.normal_map.texture;
+        mat.normalTexture = MakeTextureSource(normal, fbxDir);
+
+        if (mat.baseColorTexture.Embedded() || mat.normalTexture.Embedded()) {
+            LogInfo("Material '%s': using embedded texture data.", mat.name.c_str());
+        }
 
         out.materials.push_back(std::move(mat));
     }

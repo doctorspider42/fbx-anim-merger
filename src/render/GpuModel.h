@@ -49,7 +49,7 @@ public:
     size_t TextureCount() const { return m_textures.size(); }
 
 private:
-    GLuint LoadTexture(const std::string& path);
+    GLuint LoadTexture(const TextureSource& source);
 
     std::vector<GpuMesh> m_meshes;
     std::vector<GpuMaterial> m_materials;

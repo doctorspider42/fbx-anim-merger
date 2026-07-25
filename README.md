@@ -17,6 +17,10 @@ nothing proprietary, nothing paid.
 
 - **Import a base model** — geometry, materials, skeleton, skinning, plus any
   animation takes the file already contains.
+- **Textures, embedded or on disk** — packaged characters carry their skins inside
+  the FBX and record paths from the machine that built them, so the embedded bytes
+  are read straight out of the file. Base colour is shown in the preview; base
+  colour and normal map are carried through to both export formats.
 - **Import animation files** — every animation stack found is baked and merged
   onto the base rig. Track binding is by node name, with namespace stripping
   (`mixamorig:Hips` → `Hips`), `Armature|Hips` path stripping and optional
@@ -159,7 +163,11 @@ generator or another dependency.
 - Animation is resampled, not curve-preserving. Raise the bake rate for fast
   motion.
 - Blend shapes / morph targets are not carried through.
-- Only the base-colour texture is imported for preview and re-exported.
+- Base colour and normal maps survive; specular, roughness, AO and other maps are
+  dropped. The preview shades with base colour only — the normal map is
+  pass-through, since the mesh carries no tangents.
+- FBX and glTF disagree on where UV (0,0) sits, so V is flipped on glTF export.
+  Textures authored against the FBX convention come out right in both.
 
 ## Licence
 

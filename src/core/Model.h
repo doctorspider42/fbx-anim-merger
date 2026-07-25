@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -47,13 +48,29 @@ struct Mesh {
     glm::vec3 aabbMax{0.0f};
 };
 
+// An image either sitting on disk or carried inside the FBX itself. Packages that
+// bundle their skins (Mixamo, most marketplace assets) embed the bytes and leave
+// behind file paths from the machine that authored them, so a path-only
+// representation loses the texture entirely.
+struct TextureSource {
+    std::string name;  // "Arissa_DIFF_diffuse.png"
+    std::string path;  // absolute path, empty when the image is embedded only
+    // Shared so that copying a Model (as export does) stays cheap.
+    std::shared_ptr<const std::vector<uint8_t>> content;
+
+    bool Empty() const { return path.empty() && !content; }
+    bool Embedded() const { return static_cast<bool>(content); }
+    const std::string& Key() const { return path.empty() ? name : path; }
+};
+
 struct Material {
     std::string name = "material";
     glm::vec3 baseColor{0.8f, 0.8f, 0.8f};
     float opacity = 1.0f;
     float metallic = 0.0f;
     float roughness = 0.6f;
-    std::string baseColorTexture;  // absolute path, may be empty
+    TextureSource baseColorTexture;
+    TextureSource normalTexture;  // carried through to export; the preview ignores it
 };
 
 struct Node {

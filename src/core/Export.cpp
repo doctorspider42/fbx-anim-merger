@@ -59,6 +59,15 @@ void ApplyScale(Model& model, float scale) {
     }
 }
 
+std::shared_ptr<const std::vector<uint8_t>> ReadFileBytes(const std::string& path) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) return nullptr;
+    auto bytes = std::make_shared<std::vector<uint8_t>>(std::istreambuf_iterator<char>(stream),
+                                                        std::istreambuf_iterator<char>());
+    if (bytes->empty()) return nullptr;
+    return bytes;
+}
+
 const char* FormatHintFromPath(const std::string& path) {
     std::string ext = fs::path(path).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(),
@@ -342,6 +351,14 @@ ExportResult ExportModel(const Model& source, const std::string& path, const Exp
     }
     ApplyScale(model, options.scale);
 
+    // glTF places the UV origin at the top-left of the image, FBX at the bottom-left.
+    // Everything is held in FBX convention, so glTF targets need the flip.
+    if (options.format == ExportFormat::Glb || options.format == ExportFormat::GltfSeparate) {
+        for (Mesh& mesh : model.meshes) {
+            for (Vertex& vertex : mesh.vertices) vertex.uv.y = 1.0f - vertex.uv.y;
+        }
+    }
+
     std::vector<int> animIndices = options.animations;
     if (animIndices.empty()) {
         animIndices.resize(model.animations.size());
@@ -364,7 +381,45 @@ ExportResult ExportModel(const Model& source, const std::string& path, const Exp
     scene.mNumMaterials = static_cast<unsigned>(materialCount);
     scene.mMaterials = new aiMaterial*[materialCount];
 
-    std::vector<std::pair<std::string, std::string>> embedded;  // (path, format hint)
+    struct EmbeddedTexture {
+        std::string name;
+        std::string hint;
+        std::shared_ptr<const std::vector<uint8_t>> bytes;
+    };
+    std::vector<EmbeddedTexture> embedded;
+
+    // Resolves one texture into either a file reference or an embedded blob, then
+    // binds it to every assimp slot the target writers look at.
+    auto addTexture = [&](aiMaterial* material, const TextureSource& source,
+                          std::initializer_list<aiTextureType> slots) {
+        if (source.Empty()) return;
+
+        const std::string hint = FormatHintFromPath(source.name.empty() ? source.path : source.name);
+
+        // A texture that only exists inside the source FBX has to be embedded no
+        // matter what the checkbox says - a path reference to it would dangle.
+        const bool mustEmbed = source.path.empty();
+        std::string reference = source.path;
+
+        if ((options.embedTextures || mustEmbed) && !hint.empty()) {
+            std::shared_ptr<const std::vector<uint8_t>> bytes = source.content;
+            if (!bytes) bytes = ReadFileBytes(source.path);
+            if (bytes) {
+                reference = "*" + std::to_string(embedded.size());
+                embedded.push_back({source.name, hint, std::move(bytes)});
+            }
+        }
+
+        if (reference.empty()) {
+            LogWarn("Texture '%s' could not be resolved for export.", source.Key().c_str());
+            return;
+        }
+
+        aiString value = ToAssimp(reference);
+        for (aiTextureType slot : slots) {
+            material->AddProperty(&value, AI_MATKEY_TEXTURE(slot, 0));
+        }
+    };
 
     for (size_t i = 0; i < materialCount; ++i) {
         auto* material = new aiMaterial();
@@ -381,19 +436,9 @@ ExportResult ExportModel(const Model& source, const std::string& path, const Exp
         material->AddProperty(&src.roughness, 1, AI_MATKEY_ROUGHNESS_FACTOR);
         material->AddProperty(&src.opacity, 1, AI_MATKEY_OPACITY);
 
-        if (!src.baseColorTexture.empty()) {
-            std::string texturePath = src.baseColorTexture;
-            if (options.embedTextures) {
-                const char* hint = FormatHintFromPath(src.baseColorTexture);
-                if (hint[0] != '\0') {
-                    texturePath = "*" + std::to_string(embedded.size());
-                    embedded.emplace_back(src.baseColorTexture, hint);
-                }
-            }
-            aiString texture = ToAssimp(texturePath);
-            material->AddProperty(&texture, AI_MATKEY_TEXTURE_DIFFUSE(0));
-            material->AddProperty(&texture, AI_MATKEY_TEXTURE(aiTextureType_BASE_COLOR, 0));
-        }
+        addTexture(material, src.baseColorTexture,
+                   {aiTextureType_DIFFUSE, aiTextureType_BASE_COLOR});
+        addTexture(material, src.normalTexture, {aiTextureType_NORMALS});
 
         scene.mMaterials[i] = material;
     }
@@ -402,20 +447,21 @@ ExportResult ExportModel(const Model& source, const std::string& path, const Exp
     if (!embedded.empty()) {
         std::vector<aiTexture*> textures;
         textures.reserve(embedded.size());
-        for (const auto& [file, hint] : embedded) {
-            std::ifstream stream(file, std::ios::binary);
-            std::vector<char> bytes((std::istreambuf_iterator<char>(stream)),
-                                    std::istreambuf_iterator<char>());
+        for (const EmbeddedTexture& entry : embedded) {
+            const std::vector<uint8_t>& bytes = *entry.bytes;
 
             auto* texture = new aiTexture();
+            // mHeight == 0 marks the payload as a compressed file, not raw texels.
             texture->mHeight = 0;
             texture->mWidth = static_cast<unsigned>(bytes.size());
-            std::snprintf(texture->achFormatHint, sizeof(texture->achFormatHint), "%s", hint.c_str());
-            texture->pcData = reinterpret_cast<aiTexel*>(new char[bytes.size() ? bytes.size() : 1]);
+            std::snprintf(texture->achFormatHint, sizeof(texture->achFormatHint), "%s",
+                          entry.hint.c_str());
+            texture->pcData = reinterpret_cast<aiTexel*>(new char[bytes.size()]);
             std::memcpy(texture->pcData, bytes.data(), bytes.size());
-            texture->mFilename = ToAssimp(fs::path(file).filename().string());
+            texture->mFilename = ToAssimp(entry.name);
             textures.push_back(texture);
         }
+        LogInfo("Embedding %zu texture(s) into the export.", textures.size());
         scene.mNumTextures = static_cast<unsigned>(textures.size());
         scene.mTextures = new aiTexture*[textures.size()];
         std::copy(textures.begin(), textures.end(), scene.mTextures);

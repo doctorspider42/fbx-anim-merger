@@ -32,20 +32,32 @@ void GpuModel::Destroy() {
     m_materials.clear();
 }
 
-GLuint GpuModel::LoadTexture(const std::string& path) {
-    if (path.empty()) return 0;
+GLuint GpuModel::LoadTexture(const TextureSource& source) {
+    if (source.Empty()) return 0;
 
-    auto it = m_textures.find(path);
+    const std::string& key = source.Key();
+    auto it = m_textures.find(key);
     if (it != m_textures.end()) return it->second;
 
     int width = 0;
     int height = 0;
     int channels = 0;
+    // FBX UVs put (0,0) at the bottom-left, OpenGL samples an unflipped upload from
+    // the top-left, so the image is flipped once here rather than in the shader.
     stbi_set_flip_vertically_on_load(1);
-    unsigned char* pixels = stbi_load(path.c_str(), &width, &height, &channels, 4);
+
+    unsigned char* pixels = nullptr;
+    if (source.Embedded()) {
+        pixels = stbi_load_from_memory(source.content->data(),
+                                       static_cast<int>(source.content->size()), &width, &height,
+                                       &channels, 4);
+    } else {
+        pixels = stbi_load(source.path.c_str(), &width, &height, &channels, 4);
+    }
+
     if (!pixels) {
-        LogWarn("Could not decode texture '%s' (%s).", path.c_str(), stbi_failure_reason());
-        m_textures.emplace(path, 0);
+        LogWarn("Could not decode texture '%s' (%s).", key.c_str(), stbi_failure_reason());
+        m_textures.emplace(key, 0);
         return 0;
     }
 
@@ -63,7 +75,9 @@ GLuint GpuModel::LoadTexture(const std::string& path) {
     glBindTexture(GL_TEXTURE_2D, 0);
 
     stbi_image_free(pixels);
-    m_textures.emplace(path, texture);
+    m_textures.emplace(key, texture);
+    LogInfo("Texture '%s' %dx%d loaded (%s).", key.c_str(), width, height,
+            source.Embedded() ? "embedded" : "from disk");
     return texture;
 }
 

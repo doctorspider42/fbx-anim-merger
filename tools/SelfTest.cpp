@@ -84,7 +84,9 @@ Model MakeRig(const std::string& clipName, float twistDegrees, float boneLength 
             Vertex v;
             v.position = glm::vec3(x, y, z);
             v.normal = glm::normalize(glm::vec3(x, 0.0f, z));
-            v.uv = glm::vec2(static_cast<float>(corner) / 4.0f, y * 0.5f);
+            // V deliberately spans 0..0.5 rather than 0..1: an asymmetric range is
+            // what makes the glTF V-flip observable in the round-trip check.
+            v.uv = glm::vec2(static_cast<float>(corner) / 4.0f, y * 0.25f);
             const int bone = (level == 0) ? 0 : (level == 2 ? 1 : 0);
             v.boneIndices = glm::ivec4(bone, 0, 0, 0);
             v.boneWeights = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
@@ -167,6 +169,10 @@ struct ReadBack {
     unsigned bones = 0;
     unsigned animations = 0;
     unsigned channels = 0;
+    unsigned textures = 0;
+    unsigned textureBytes = 0;
+    float minV = 0.0f;
+    float maxV = 0.0f;
 };
 
 ReadBack ReadWithAssimp(const fs::path& path) {
@@ -183,6 +189,23 @@ ReadBack ReadWithAssimp(const fs::path& path) {
     out.animations = scene->mNumAnimations;
     for (unsigned i = 0; i < scene->mNumAnimations; ++i) {
         out.channels += scene->mAnimations[i]->mNumChannels;
+    }
+
+    out.textures = scene->mNumTextures;
+    for (unsigned i = 0; i < scene->mNumTextures; ++i) {
+        // mHeight == 0 means the payload is a compressed file and mWidth its length.
+        if (scene->mTextures[i]->mHeight == 0) out.textureBytes += scene->mTextures[i]->mWidth;
+    }
+
+    out.minV = 1.0e9f;
+    out.maxV = -1.0e9f;
+    for (unsigned m = 0; m < scene->mNumMeshes; ++m) {
+        const aiMesh* mesh = scene->mMeshes[m];
+        if (!mesh->HasTextureCoords(0)) continue;
+        for (unsigned v = 0; v < mesh->mNumVertices; ++v) {
+            out.minV = std::min(out.minV, mesh->mTextureCoords[0][v].y);
+            out.maxV = std::max(out.maxV, mesh->mTextureCoords[0][v].y);
+        }
     }
     return out;
 }
@@ -425,6 +448,60 @@ int main() {
     Check(glbBack.bones >= 2, "glb: " + std::to_string(glbBack.bones) + " bone binding(s)");
     Check(glbBack.animations == 3,
           "glb: " + std::to_string(glbBack.animations) + " animation(s), expected 3");
+
+    // ------------------------------ 7. embedded textures and glTF UV orientation
+    // Packaged characters (Mixamo and friends) carry their skins inside the FBX and
+    // leave behind paths from the machine that built them, so an export that only
+    // knows about files on disk silently drops every texture.
+    std::printf("\n7. Embedded textures and UV orientation\n");
+    {
+        Model textured = MakeRig("Idle", 20.0f);
+
+        std::vector<uint8_t> raw = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+        raw.resize(264, 0x5A);
+        const size_t textureBytes = raw.size();
+
+        TextureSource embedded;
+        embedded.name = "test_diffuse.png";
+        embedded.content = std::make_shared<const std::vector<uint8_t>>(std::move(raw));
+        textured.materials[0].baseColorTexture = embedded;
+
+        const fs::path texturedGlb = dir / "textured.glb";
+        const fs::path texturedFbx = dir / "textured.fbx";
+
+        ExportOptions glbOpts;
+        glbOpts.format = ExportFormat::Glb;
+        glbOpts.scale = DefaultScaleFor(ExportFormat::Glb);
+        // Left off on purpose: an image that exists only inside the source file has
+        // to be embedded regardless, otherwise the reference dangles.
+        glbOpts.embedTextures = false;
+        Check(ExportModel(textured, texturedGlb.string(), glbOpts).ok, "textured.glb written");
+
+        ExportOptions fbxOpts;
+        fbxOpts.format = ExportFormat::FbxBinary;
+        fbxOpts.scale = DefaultScaleFor(ExportFormat::FbxBinary);
+        Check(ExportModel(textured, texturedFbx.string(), fbxOpts).ok, "textured.fbx written");
+
+        const ReadBack glbTex = ReadWithAssimp(texturedGlb);
+        Check(glbTex.textures == 1,
+              "glb carries " + std::to_string(glbTex.textures) + " embedded texture(s), expected 1");
+        Check(glbTex.textureBytes == textureBytes,
+              "glb texture payload intact (" + std::to_string(glbTex.textureBytes) + " of " +
+                  std::to_string(textureBytes) + " bytes)");
+
+        const ReadBack fbxTex = ReadWithAssimp(texturedFbx);
+        Check(fbxTex.textures == 1 && fbxTex.textureBytes == textureBytes,
+              "fbx carries the embedded texture intact");
+
+        // Source V spans 0..0.5. FBX keeps it; glTF's origin is the opposite corner,
+        // so the same range must come back as 0.5..1.
+        Check(std::fabs(fbxTex.minV - 0.0f) < 1.0e-3f && std::fabs(fbxTex.maxV - 0.5f) < 1.0e-3f,
+              "fbx keeps V as authored (" + std::to_string(fbxTex.minV) + ".." +
+                  std::to_string(fbxTex.maxV) + ")");
+        Check(std::fabs(glbTex.minV - 0.5f) < 1.0e-3f && std::fabs(glbTex.maxV - 1.0f) < 1.0e-3f,
+              "glb flips V to glTF's top-left origin (" + std::to_string(glbTex.minV) + ".." +
+                  std::to_string(glbTex.maxV) + ")");
+    }
 
     std::printf("\n%s (%d failure(s))\n", g_failures == 0 ? "ALL CHECKS PASSED" : "FAILURES", g_failures);
     return g_failures == 0 ? 0 : 1;
