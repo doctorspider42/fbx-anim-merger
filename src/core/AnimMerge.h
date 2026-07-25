@@ -1,0 +1,37 @@
+#pragma once
+
+#include <string>
+#include <vector>
+
+#include "core/Model.h"
+
+namespace fam {
+
+struct MergeOptions {
+    // "mixamorig:Hips" / "Armature|Hips" -> "Hips"
+    bool stripNamespace = true;
+    bool caseInsensitive = true;
+    // Drop tracks that resolve to a node which is not part of the target skeleton
+    // (mesh nodes, helpers, cameras...). Usually the right thing for clip merging.
+    bool skeletonTracksOnly = false;
+    // Applied to every merged clip name, e.g. "run_" -> "run_Take 001".
+    std::string namePrefix;
+};
+
+struct MergeReport {
+    int animationsAdded = 0;
+    int tracksMatched = 0;
+    int tracksDropped = 0;
+    std::vector<std::string> unmatchedNodes;  // deduplicated, capped
+    std::vector<std::string> addedNames;
+};
+
+// Percentage [0..1] of the source's animated nodes that exist in the target rig.
+float EstimateCompatibility(const Model& target, const Model& source, const MergeOptions& options);
+
+// Copies the selected animations from `source` into `target`, rebinding every
+// track to the target node names. `sourceIndices` empty means "all".
+MergeReport MergeAnimations(Model& target, const Model& source, const MergeOptions& options,
+                            const std::vector<int>& sourceIndices = {});
+
+}  // namespace fam

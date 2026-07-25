@@ -1,0 +1,718 @@
+// All ImGui panel code lives here to keep Application.cpp about behaviour.
+#include <algorithm>
+#include <cfloat>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+
+#include <imgui.h>
+#include <imgui_internal.h>
+
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+
+#include "app/Application.h"
+#include "util/Log.h"
+
+namespace fs = std::filesystem;
+
+namespace fam {
+namespace {
+
+constexpr const char* kViewportWindow = "Viewport";
+constexpr const char* kSceneWindow = "Scene";
+constexpr const char* kAnimationWindow = "Animations";
+constexpr const char* kTimelineWindow = "Timeline";
+constexpr const char* kSettingsWindow = "Settings";
+constexpr const char* kLogWindow = "Log";
+
+ImVec4 LevelColor(LogLevel level) {
+    switch (level) {
+        case LogLevel::Success: return ImVec4(0.45f, 0.85f, 0.50f, 1.0f);
+        case LogLevel::Warning: return ImVec4(0.98f, 0.75f, 0.30f, 1.0f);
+        case LogLevel::Error:   return ImVec4(0.95f, 0.42f, 0.42f, 1.0f);
+        default:                return ImVec4(0.78f, 0.80f, 0.84f, 1.0f);
+    }
+}
+
+void HelpMarker(const char* text) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::BeginItemTooltip()) {
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+        ImGui::TextUnformatted(text);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+}
+
+std::string FormatDuration(float seconds, float rate) {
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%.2fs / %d f", static_cast<double>(seconds),
+                  static_cast<int>(seconds * rate + 0.5f) + 1);
+    return buffer;
+}
+
+}  // namespace
+
+void Application::ApplyStyle() {
+    ImGuiIO& io = ImGui::GetIO();
+
+    const char* fontCandidates[] = {
+        "C:/Windows/Fonts/segoeui.ttf",
+        "C:/Windows/Fonts/tahoma.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/System/Library/Fonts/SFNS.ttf",
+    };
+    for (const char* candidate : fontCandidates) {
+        std::error_code ec;
+        if (fs::exists(candidate, ec)) {
+            io.Fonts->AddFontFromFileTTF(candidate, 17.0f);
+            break;
+        }
+    }
+
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImGui::StyleColorsDark();
+
+    style.WindowRounding = 6.0f;
+    style.ChildRounding = 6.0f;
+    style.FrameRounding = 5.0f;
+    style.PopupRounding = 6.0f;
+    style.ScrollbarRounding = 8.0f;
+    style.GrabRounding = 5.0f;
+    style.TabRounding = 5.0f;
+    style.WindowBorderSize = 0.0f;
+    style.FrameBorderSize = 0.0f;
+    style.WindowPadding = ImVec2(10.0f, 10.0f);
+    style.FramePadding = ImVec2(9.0f, 5.0f);
+    style.ItemSpacing = ImVec2(8.0f, 7.0f);
+    style.ItemInnerSpacing = ImVec2(6.0f, 5.0f);
+    style.ScrollbarSize = 12.0f;
+    style.GrabMinSize = 10.0f;
+    style.SeparatorTextBorderSize = 2.0f;
+
+    ImVec4* colors = style.Colors;
+    const ImVec4 accent(0.29f, 0.56f, 0.94f, 1.0f);
+    const ImVec4 accentDim(0.29f, 0.56f, 0.94f, 0.55f);
+
+    colors[ImGuiCol_WindowBg]            = ImVec4(0.086f, 0.090f, 0.105f, 1.00f);
+    colors[ImGuiCol_ChildBg]             = ImVec4(0.098f, 0.102f, 0.118f, 1.00f);
+    colors[ImGuiCol_PopupBg]             = ImVec4(0.118f, 0.125f, 0.145f, 0.98f);
+    colors[ImGuiCol_Border]              = ImVec4(0.20f, 0.21f, 0.24f, 0.60f);
+    colors[ImGuiCol_FrameBg]             = ImVec4(0.157f, 0.165f, 0.192f, 1.00f);
+    colors[ImGuiCol_FrameBgHovered]      = ImVec4(0.204f, 0.216f, 0.251f, 1.00f);
+    colors[ImGuiCol_FrameBgActive]       = ImVec4(0.243f, 0.259f, 0.302f, 1.00f);
+    colors[ImGuiCol_TitleBg]             = ImVec4(0.071f, 0.075f, 0.086f, 1.00f);
+    colors[ImGuiCol_TitleBgActive]       = ImVec4(0.098f, 0.106f, 0.125f, 1.00f);
+    colors[ImGuiCol_MenuBarBg]           = ImVec4(0.071f, 0.075f, 0.086f, 1.00f);
+    colors[ImGuiCol_ScrollbarBg]         = ImVec4(0.071f, 0.075f, 0.086f, 0.60f);
+    colors[ImGuiCol_ScrollbarGrab]       = ImVec4(0.24f, 0.25f, 0.29f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabHovered]= ImVec4(0.31f, 0.33f, 0.38f, 1.00f);
+    colors[ImGuiCol_CheckMark]           = accent;
+    colors[ImGuiCol_SliderGrab]          = accent;
+    colors[ImGuiCol_SliderGrabActive]    = ImVec4(0.40f, 0.66f, 1.00f, 1.00f);
+    colors[ImGuiCol_Button]              = ImVec4(0.180f, 0.192f, 0.227f, 1.00f);
+    colors[ImGuiCol_ButtonHovered]       = ImVec4(0.239f, 0.263f, 0.318f, 1.00f);
+    colors[ImGuiCol_ButtonActive]        = accentDim;
+    colors[ImGuiCol_Header]              = ImVec4(0.20f, 0.24f, 0.32f, 1.00f);
+    colors[ImGuiCol_HeaderHovered]       = ImVec4(0.24f, 0.31f, 0.43f, 1.00f);
+    colors[ImGuiCol_HeaderActive]        = accentDim;
+    colors[ImGuiCol_Separator]           = ImVec4(0.19f, 0.20f, 0.23f, 1.00f);
+    colors[ImGuiCol_Tab]                 = ImVec4(0.106f, 0.114f, 0.133f, 1.00f);
+    colors[ImGuiCol_TabHovered]          = ImVec4(0.22f, 0.29f, 0.40f, 1.00f);
+    colors[ImGuiCol_TabSelected]         = ImVec4(0.157f, 0.176f, 0.216f, 1.00f);
+    colors[ImGuiCol_TabDimmed]           = ImVec4(0.086f, 0.090f, 0.105f, 1.00f);
+    colors[ImGuiCol_TabDimmedSelected]   = ImVec4(0.129f, 0.141f, 0.169f, 1.00f);
+    colors[ImGuiCol_DockingPreview]      = accentDim;
+    colors[ImGuiCol_TableHeaderBg]       = ImVec4(0.129f, 0.137f, 0.161f, 1.00f);
+    colors[ImGuiCol_TableRowBgAlt]       = ImVec4(1.00f, 1.00f, 1.00f, 0.020f);
+    colors[ImGuiCol_TextSelectedBg]      = accentDim;
+    colors[ImGuiCol_Text]                = ImVec4(0.878f, 0.890f, 0.910f, 1.00f);
+    colors[ImGuiCol_TextDisabled]        = ImVec4(0.478f, 0.494f, 0.529f, 1.00f);
+}
+
+void Application::DrawUi() {
+    DrawDockSpace();
+    DrawViewport();
+    DrawScenePanel();
+    DrawAnimationPanel();
+    DrawTimeline();
+    DrawSettingsPanel();
+    DrawLogPanel();
+    DrawExportPopup();
+
+    if (m_showAbout) {
+        ImGui::OpenPopup("About##dialog");
+        m_showAbout = false;
+    }
+    if (ImGui::BeginPopupModal("About##dialog", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::SeparatorText("FBX Animation Merger");
+        ImGui::TextUnformatted("Merge animation clips from separate FBX files onto one rig,\n"
+                               "preview them, rename them, export to FBX or glTF/GLB.");
+        ImGui::Spacing();
+        ImGui::SeparatorText("Third-party components");
+        ImGui::BulletText("ufbx - MIT");
+        ImGui::BulletText("Assimp - BSD 3-Clause");
+        ImGui::BulletText("Dear ImGui - MIT");
+        ImGui::BulletText("GLFW - zlib/libpng");
+        ImGui::BulletText("GLM - MIT");
+        ImGui::BulletText("nativefiledialog-extended - zlib");
+        ImGui::BulletText("stb_image - MIT / public domain");
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
+void Application::DrawDockSpace() {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImGui::SetNextWindowViewport(viewport->ID);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus |
+                             ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_MenuBar;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::Begin("##dockhost", nullptr, flags);
+    ImGui::PopStyleVar(2);
+
+    const ImGuiID dockspaceId = ImGui::GetID("MainDockSpace");
+
+    if (!m_layoutInitialized) {
+        m_layoutInitialized = true;
+        if (ImGui::DockBuilderGetNode(dockspaceId) == nullptr) {
+            ImGui::DockBuilderRemoveNode(dockspaceId);
+            ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+            ImGui::DockBuilderSetNodeSize(dockspaceId, viewport->WorkSize);
+
+            ImGuiID center = dockspaceId;
+            const ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.22f, nullptr, &center);
+            const ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.24f, nullptr, &center);
+            ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.32f, nullptr, &center);
+            const ImGuiID leftBottom = ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.60f, nullptr, nullptr);
+            const ImGuiID bottomRight = ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Right, 0.42f, nullptr, &bottom);
+
+            ImGui::DockBuilderDockWindow(kViewportWindow, center);
+            ImGui::DockBuilderDockWindow(kSceneWindow, left);
+            ImGui::DockBuilderDockWindow(kAnimationWindow, leftBottom);
+            ImGui::DockBuilderDockWindow(kSettingsWindow, right);
+            ImGui::DockBuilderDockWindow(kTimelineWindow, bottom);
+            ImGui::DockBuilderDockWindow(kLogWindow, bottomRight);
+            ImGui::DockBuilderFinish(dockspaceId);
+        }
+    }
+
+    ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
+
+    DrawMenuBar();
+    ImGui::End();
+}
+
+void Application::DrawMenuBar() {
+    if (!ImGui::BeginMenuBar()) return;
+
+    if (ImGui::BeginMenu("File")) {
+        if (ImGui::MenuItem("Import base model...", "Ctrl+O")) ImportBaseModel();
+        if (ImGui::MenuItem("Import animations...", "Ctrl+I", false, m_model.Valid())) {
+            ImportAnimationFiles();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Export...", "Ctrl+E", false, m_model.Valid())) m_openExportPopup = true;
+        ImGui::Separator();
+        if (ImGui::MenuItem("Exit", "Alt+F4")) glfwSetWindowShouldClose(m_window, GLFW_TRUE);
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("View")) {
+        ImGui::MenuItem("Mesh", nullptr, &m_renderSettings.showMesh);
+        ImGui::MenuItem("Wireframe", nullptr, &m_renderSettings.wireframe);
+        ImGui::MenuItem("Grid", nullptr, &m_renderSettings.showGrid);
+        ImGui::MenuItem("Skeleton", nullptr, &m_renderSettings.showSkeleton);
+        ImGui::MenuItem("Bind pose", nullptr, &m_bindPose);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Frame model", "F", false, m_model.Valid())) FrameCamera();
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Help")) {
+        if (ImGui::MenuItem("About")) m_showAbout = true;
+        ImGui::EndMenu();
+    }
+
+    // Right-aligned status strip.
+    const float fps = m_frameMilliseconds > 0.0f ? 1000.0f / m_frameMilliseconds : 0.0f;
+    char status[256];
+    std::snprintf(status, sizeof(status), "%s   |   %zu tris  %zu draws   |   %.1f ms (%.0f fps)",
+                  m_statusText.c_str(), m_renderer.LastTriangles(), m_renderer.LastDrawCalls(),
+                  static_cast<double>(m_frameMilliseconds), static_cast<double>(fps));
+    const float width = ImGui::CalcTextSize(status).x;
+    ImGui::SameLine(ImGui::GetWindowWidth() - width - 16.0f);
+    ImGui::TextDisabled("%s", status);
+
+    ImGui::EndMenuBar();
+
+    // Shortcuts (menu bar is always present, so this is a convenient home).
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) ImportBaseModel();
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_I, false) && m_model.Valid()) ImportAnimationFiles();
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_E, false) && m_model.Valid()) m_openExportPopup = true;
+    if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false)) m_playing = !m_playing;
+    if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F, false) && m_model.Valid()) FrameCamera();
+}
+
+void Application::DrawViewport() {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::Begin(kViewportWindow, nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+
+    const ImVec2 size = ImGui::GetContentRegionAvail();
+    m_viewportWidth = std::max(1, static_cast<int>(size.x));
+    m_viewportHeight = std::max(1, static_cast<int>(size.y));
+
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##viewport-input", ImVec2(std::max(size.x, 1.0f), std::max(size.y, 1.0f)),
+                           ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
+                               ImGuiButtonFlags_MouseButtonMiddle);
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    if (m_renderer.ColorTexture() != 0) {
+        // The framebuffer is bottom-up, so V is flipped.
+        drawList->AddImage(static_cast<ImTextureID>(static_cast<intptr_t>(m_renderer.ColorTexture())),
+                           origin, ImVec2(origin.x + size.x, origin.y + size.y), ImVec2(0.0f, 1.0f),
+                           ImVec2(1.0f, 0.0f));
+    }
+
+    const ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsItemActive()) {
+        const ImVec2 delta = io.MouseDelta;
+        const bool pan = io.MouseDown[ImGuiMouseButton_Middle] ||
+                         (io.MouseDown[ImGuiMouseButton_Left] && io.KeyShift) ||
+                         io.MouseDown[ImGuiMouseButton_Right];
+        if (pan) {
+            m_camera.Pan(delta.x, delta.y);
+        } else if (io.MouseDown[ImGuiMouseButton_Left]) {
+            m_camera.Orbit(-delta.x * 0.008f, delta.y * 0.008f);
+        }
+    }
+    if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f) {
+        m_camera.Dolly(io.MouseWheel);
+    }
+
+    // Overlay
+    if (!m_model.Valid()) {
+        const char* hint = "Drop in a base FBX via  File > Import base model...";
+        const ImVec2 textSize = ImGui::CalcTextSize(hint);
+        drawList->AddText(ImVec2(origin.x + (size.x - textSize.x) * 0.5f,
+                                 origin.y + (size.y - textSize.y) * 0.5f),
+                          IM_COL32(150, 155, 165, 255), hint);
+    } else {
+        const Animation* animation = CurrentAnimation();
+        char overlay[192];
+        std::snprintf(overlay, sizeof(overlay), "%s   %.2f s",
+                      m_bindPose ? "Bind pose" : (animation ? animation->name.c_str() : "No clip"),
+                      static_cast<double>(m_playhead));
+        drawList->AddRectFilled(ImVec2(origin.x + 10.0f, origin.y + 10.0f),
+                                ImVec2(origin.x + 22.0f + ImGui::CalcTextSize(overlay).x,
+                                       origin.y + 20.0f + ImGui::GetTextLineHeight()),
+                                IM_COL32(0, 0, 0, 110), 4.0f);
+        drawList->AddText(ImVec2(origin.x + 16.0f, origin.y + 15.0f), IM_COL32(230, 233, 240, 220),
+                          overlay);
+    }
+
+    ImGui::End();
+}
+
+void Application::DrawScenePanel() {
+    ImGui::Begin(kSceneWindow);
+
+    if (!m_model.Valid()) {
+        ImGui::TextDisabled("No model loaded.");
+        ImGui::Spacing();
+        if (ImGui::Button("Import base model...", ImVec2(-FLT_MIN, 0))) ImportBaseModel();
+        ImGui::End();
+        return;
+    }
+
+    ImGui::SeparatorText("Source");
+    ImGui::TextWrapped("%s", fs::path(m_model.sourcePath).filename().string().c_str());
+    ImGui::TextDisabled("%s", fs::path(m_model.sourcePath).parent_path().string().c_str());
+
+    ImGui::SeparatorText("Statistics");
+    if (ImGui::BeginTable("##stats", 2, ImGuiTableFlags_SizingStretchProp)) {
+        auto row = [](const char* label, const std::string& value) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", label);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(value.c_str());
+        };
+        row("Nodes", std::to_string(m_model.nodes.size()));
+        row("Meshes", std::to_string(m_model.meshes.size()));
+        row("Triangles", std::to_string(m_model.totalTriangles));
+        row("Vertices", std::to_string(m_model.totalVertices));
+        row("Bones", std::to_string(m_model.skeleton.bones.size()));
+        row("Materials", std::to_string(m_model.materials.size()));
+        row("Clips", std::to_string(m_model.animations.size()));
+        ImGui::EndTable();
+    }
+
+    if (m_model.skeleton.bones.size() > static_cast<size_t>(kMaxBones)) {
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, LevelColor(LogLevel::Warning));
+        ImGui::TextWrapped("Skeleton exceeds the %d-bone preview limit; export is unaffected.", kMaxBones);
+        ImGui::PopStyleColor();
+    }
+
+    if (m_hasMergeReport) {
+        ImGui::SeparatorText("Last merge");
+        ImGui::Text("%d clip(s), %d track(s) bound", m_lastMergeReport.animationsAdded,
+                    m_lastMergeReport.tracksMatched);
+        if (m_lastMergeReport.tracksDropped > 0) {
+            ImGui::PushStyleColor(ImGuiCol_Text, LevelColor(LogLevel::Warning));
+            ImGui::Text("%d track(s) dropped", m_lastMergeReport.tracksDropped);
+            ImGui::PopStyleColor();
+        }
+        if (!m_lastMergeReport.unmatchedNodes.empty() &&
+            ImGui::TreeNode("Unmatched nodes")) {
+            for (const std::string& name : m_lastMergeReport.unmatchedNodes) {
+                ImGui::BulletText("%s", name.c_str());
+            }
+            ImGui::TreePop();
+        }
+    }
+
+    ImGui::End();
+}
+
+void Application::DrawAnimationPanel() {
+    ImGui::Begin(kAnimationWindow);
+
+    const bool hasModel = m_model.Valid();
+    ImGui::BeginDisabled(!hasModel);
+    if (ImGui::Button("Import animations...")) ImportAnimationFiles();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(m_model.animations.empty());
+    if (ImGui::Button("Export...")) m_openExportPopup = true;
+    ImGui::EndDisabled();
+
+    if (m_model.animations.empty()) {
+        ImGui::Spacing();
+        ImGui::TextDisabled(hasModel ? "No clips yet. Import FBX files containing takes."
+                                     : "Load a base model first.");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::SameLine();
+    if (ImGui::SmallButton("All")) {
+        for (Animation& anim : m_model.animations) anim.exportSelected = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("None")) {
+        for (Animation& anim : m_model.animations) anim.exportSelected = false;
+    }
+    HelpMarker("Checkbox column selects which clips are written on export.");
+
+    constexpr ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                                      ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
+
+    int deleteRequest = -1;
+
+    if (ImGui::BeginTable("##clips", 3, flags, ImVec2(0.0f, -1.0f))) {
+        ImGui::TableSetupColumn("##export", ImGuiTableColumnFlags_WidthFixed, 26.0f);
+        ImGui::TableSetupColumn("Clip", ImGuiTableColumnFlags_WidthStretch, 0.62f);
+        ImGui::TableSetupColumn("Length", ImGuiTableColumnFlags_WidthStretch, 0.38f);
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableHeadersRow();
+
+        for (int i = 0; i < static_cast<int>(m_model.animations.size()); ++i) {
+            Animation& anim = m_model.animations[static_cast<size_t>(i)];
+            ImGui::PushID(i);
+            ImGui::TableNextRow();
+
+            ImGui::TableNextColumn();
+            ImGui::Checkbox("##sel", &anim.exportSelected);
+
+            ImGui::TableNextColumn();
+            if (m_renamingAnimation == i) {
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                if (ImGui::IsWindowAppearing() || !ImGui::IsAnyItemActive()) {
+                    ImGui::SetKeyboardFocusHere();
+                }
+                if (ImGui::InputText("##rename", m_renameBuffer, sizeof(m_renameBuffer),
+                                     ImGuiInputTextFlags_EnterReturnsTrue |
+                                         ImGuiInputTextFlags_AutoSelectAll)) {
+                    anim.name = m_model.MakeUniqueAnimationName(m_renameBuffer, i);
+                    m_renamingAnimation = -1;
+                }
+                if (ImGui::IsKeyPressed(ImGuiKey_Escape)) m_renamingAnimation = -1;
+            } else {
+                const bool selected = (i == m_currentAnimation);
+                if (ImGui::Selectable(anim.name.c_str(), selected,
+                                      ImGuiSelectableFlags_SpanAllColumns |
+                                          ImGuiSelectableFlags_AllowOverlap)) {
+                    SelectAnimation(i);
+                }
+                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    m_renamingAnimation = i;
+                    std::snprintf(m_renameBuffer, sizeof(m_renameBuffer), "%s", anim.name.c_str());
+                }
+                if (ImGui::BeginItemTooltip()) {
+                    ImGui::Text("%s", anim.name.c_str());
+                    ImGui::TextDisabled("%zu tracks, %.1f fps", anim.tracks.size(),
+                                        static_cast<double>(anim.sampleRate));
+                    if (!anim.sourceFile.empty()) {
+                        ImGui::TextDisabled("%s", fs::path(anim.sourceFile).filename().string().c_str());
+                    }
+                    ImGui::EndTooltip();
+                }
+                if (ImGui::BeginPopupContextItem("##ctx")) {
+                    if (ImGui::MenuItem("Preview")) SelectAnimation(i);
+                    if (ImGui::MenuItem("Rename")) {
+                        m_renamingAnimation = i;
+                        std::snprintf(m_renameBuffer, sizeof(m_renameBuffer), "%s", anim.name.c_str());
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Delete")) deleteRequest = i;
+                    ImGui::EndPopup();
+                }
+            }
+
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", FormatDuration(anim.duration, anim.sampleRate).c_str());
+
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+
+    if (deleteRequest >= 0) DeleteAnimation(deleteRequest);
+
+    ImGui::End();
+}
+
+void Application::DrawTimeline() {
+    ImGui::Begin(kTimelineWindow);
+
+    const Animation* animation = CurrentAnimation();
+    const bool active = animation != nullptr && !m_bindPose;
+
+    ImGui::BeginDisabled(!active);
+
+    if (ImGui::Button("|<")) m_playhead = 0.0f;
+    ImGui::SameLine();
+    if (ImGui::Button(m_playing ? "Pause" : "Play", ImVec2(80, 0))) m_playing = !m_playing;
+    ImGui::SameLine();
+    if (ImGui::Button(">|") && animation) m_playhead = animation->duration;
+    ImGui::SameLine();
+    ImGui::Checkbox("Loop", &m_loop);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(140.0f);
+    ImGui::SliderFloat("Speed", &m_playbackSpeed, 0.05f, 3.0f, "%.2fx");
+    ImGui::SameLine();
+    if (ImGui::Button("1x")) m_playbackSpeed = 1.0f;
+
+    ImGui::Spacing();
+
+    const float duration = animation ? std::max(animation->duration, 0.0001f) : 1.0f;
+    const float rate = animation ? animation->sampleRate : 30.0f;
+    const int frame = static_cast<int>(m_playhead * rate + 0.5f);
+    const int frameCount = animation ? animation->FrameCount() : 1;
+
+    ImGui::SetNextItemWidth(-220.0f);
+    char label[64];
+    std::snprintf(label, sizeof(label), "%.3f s  (frame %d / %d)", static_cast<double>(m_playhead),
+                  frame, frameCount - 1);
+    if (ImGui::SliderFloat("##playhead", &m_playhead, 0.0f, duration, label)) {
+        m_playing = false;
+    }
+
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(200.0f);
+    ImGui::BeginDisabled(true);
+    float displayRate = rate;
+    ImGui::SliderFloat("##rate", &displayRate, 1.0f, 120.0f, "baked at %.0f fps");
+    ImGui::EndDisabled();
+
+    ImGui::EndDisabled();
+
+    if (!active) {
+        ImGui::SameLine();
+        ImGui::TextDisabled(m_bindPose ? "Bind pose preview" : "Select a clip to preview");
+    }
+
+    ImGui::End();
+}
+
+void Application::DrawSettingsPanel() {
+    ImGui::Begin(kSettingsWindow);
+
+    if (ImGui::CollapsingHeader("Import", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::SetNextItemWidth(-110.0f);
+        ImGui::SliderFloat("Bake rate", &m_importOptions.sampleRate, 5.0f, 120.0f, "%.0f fps");
+        HelpMarker("Curves from every source file are resampled at this rate. Higher is more "
+                   "faithful for fast motion, lower keeps files small. Applies to the next import.");
+    }
+
+    if (ImGui::CollapsingHeader("Merging", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Strip namespace", &m_mergeOptions.stripNamespace);
+        HelpMarker("Matches 'mixamorig:Hips' or 'Armature|Hips' against 'Hips'.");
+        ImGui::Checkbox("Ignore case", &m_mergeOptions.caseInsensitive);
+        ImGui::Checkbox("Skeleton tracks only", &m_mergeOptions.skeletonTracksOnly);
+        HelpMarker("Drops tracks targeting nodes that are not skinning bones - helpers, "
+                   "mesh nodes, cameras.");
+
+        char prefix[64];
+        std::snprintf(prefix, sizeof(prefix), "%s", m_mergeOptions.namePrefix.c_str());
+        ImGui::SetNextItemWidth(-110.0f);
+        if (ImGui::InputText("Name prefix", prefix, sizeof(prefix))) {
+            m_mergeOptions.namePrefix = prefix;
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Mesh", &m_renderSettings.showMesh);
+        ImGui::SameLine();
+        ImGui::Checkbox("Grid", &m_renderSettings.showGrid);
+        ImGui::Checkbox("Skeleton", &m_renderSettings.showSkeleton);
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!m_renderSettings.showSkeleton);
+        ImGui::Checkbox("X-ray", &m_renderSettings.xray);
+        ImGui::EndDisabled();
+        ImGui::Checkbox("Wireframe", &m_renderSettings.wireframe);
+        ImGui::SameLine();
+        ImGui::Checkbox("Cull backfaces", &m_renderSettings.backfaceCulling);
+        ImGui::Checkbox("Bind pose", &m_bindPose);
+
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(-110.0f);
+        ImGui::ColorEdit3("Background", &m_renderSettings.background.x, ImGuiColorEditFlags_NoInputs);
+        ImGui::SetNextItemWidth(-110.0f);
+        ImGui::SliderFloat("Light yaw", &m_renderSettings.lightYaw, -3.1416f, 3.1416f, "%.2f");
+        ImGui::SetNextItemWidth(-110.0f);
+        ImGui::SliderFloat("Light pitch", &m_renderSettings.lightPitch, -1.5f, 1.5f, "%.2f");
+        ImGui::SetNextItemWidth(-110.0f);
+        ImGui::SliderFloat("Ambient", &m_renderSettings.ambient, 0.0f, 1.5f, "%.2f");
+        ImGui::SetNextItemWidth(-110.0f);
+        ImGui::SliderFloat("Exposure", &m_renderSettings.exposure, 0.2f, 3.0f, "%.2f");
+    }
+
+    if (ImGui::CollapsingHeader("Camera")) {
+        ImGui::SetNextItemWidth(-110.0f);
+        ImGui::SliderFloat("FOV", &m_camera.fovDegrees, 15.0f, 90.0f, "%.0f deg");
+        if (ImGui::Button("Frame model", ImVec2(-FLT_MIN, 0)) && m_model.Valid()) FrameCamera();
+        ImGui::TextDisabled("LMB orbit - MMB/RMB pan - wheel zoom");
+    }
+
+    ImGui::End();
+}
+
+void Application::DrawLogPanel() {
+    ImGui::Begin(kLogWindow);
+
+    if (ImGui::SmallButton("Clear")) Log::Get().Clear();
+    ImGui::SameLine();
+    static bool autoScroll = true;
+    ImGui::Checkbox("Auto-scroll", &autoScroll);
+
+    ImGui::Separator();
+    ImGui::BeginChild("##logscroll", ImVec2(0, 0), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+
+    const std::deque<LogEntry> entries = Log::Get().Snapshot();
+    ImGuiListClipper clipper;
+    clipper.Begin(static_cast<int>(entries.size()));
+    while (clipper.Step()) {
+        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+            const LogEntry& entry = entries[static_cast<size_t>(i)];
+            ImGui::PushStyleColor(ImGuiCol_Text, LevelColor(entry.level));
+            ImGui::TextUnformatted(entry.text.c_str());
+            ImGui::PopStyleColor();
+        }
+    }
+    clipper.End();
+
+    if (autoScroll && Log::Get().dirty) {
+        ImGui::SetScrollHereY(1.0f);
+        Log::Get().dirty = false;
+    }
+
+    ImGui::EndChild();
+    ImGui::End();
+}
+
+void Application::DrawExportPopup() {
+    if (m_openExportPopup) {
+        ImGui::OpenPopup("Export##dialog");
+        m_openExportPopup = false;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Export##dialog", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+
+    static const char* kFormatNames[] = {"FBX (binary 7.4)", "FBX (ASCII)", "glTF 2.0 binary (.glb)",
+                                         "glTF 2.0 (.gltf + .bin)"};
+    int formatIndex = static_cast<int>(m_exportOptions.format);
+    ImGui::SetNextItemWidth(-140.0f);
+    if (ImGui::Combo("Format", &formatIndex, kFormatNames, IM_ARRAYSIZE(kFormatNames))) {
+        m_exportOptions.format = static_cast<ExportFormat>(formatIndex);
+        m_exportOptions.scale = DefaultScaleFor(m_exportOptions.format);
+        m_exportOptions.embedTextures = m_exportOptions.format == ExportFormat::Glb;
+    }
+
+    ImGui::SetNextItemWidth(-140.0f);
+    ImGui::InputFloat("Unit scale", &m_exportOptions.scale, 0.0f, 0.0f, "%.4g");
+    HelpMarker("The scene is held internally in metres. FBX conventionally stores centimetres "
+               "(x100), glTF mandates metres (x1).");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Default")) {
+        m_exportOptions.scale = DefaultScaleFor(m_exportOptions.format);
+    }
+
+    ImGui::Checkbox("Include geometry", &m_exportOptions.includeGeometry);
+    HelpMarker("Turn off to write an animation-only file.");
+    ImGui::Checkbox("Embed textures", &m_exportOptions.embedTextures);
+
+    ImGui::SeparatorText("Clips");
+    int selected = 0;
+    for (const Animation& anim : m_model.animations) {
+        if (anim.exportSelected) ++selected;
+    }
+    ImGui::Text("%d of %zu clip(s) selected", selected, m_model.animations.size());
+    if (selected == 0 && !m_model.animations.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, LevelColor(LogLevel::Warning));
+        ImGui::TextWrapped("No clips selected - the file will contain geometry only.");
+        ImGui::PopStyleColor();
+    }
+
+    if (ImGui::BeginChild("##cliplist", ImVec2(0.0f, 140.0f), ImGuiChildFlags_Borders)) {
+        for (int i = 0; i < static_cast<int>(m_model.animations.size()); ++i) {
+            Animation& anim = m_model.animations[static_cast<size_t>(i)];
+            ImGui::PushID(i);
+            ImGui::Checkbox(anim.name.c_str(), &anim.exportSelected);
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", FormatDuration(anim.duration, anim.sampleRate).c_str());
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::Spacing();
+    if (ImGui::Button("Choose file and export", ImVec2(220.0f, 0.0f))) {
+        ImGui::CloseCurrentPopup();
+        RunExport();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) ImGui::CloseCurrentPopup();
+
+    ImGui::EndPopup();
+}
+
+}  // namespace fam
