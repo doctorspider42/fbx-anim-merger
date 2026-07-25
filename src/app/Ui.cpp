@@ -9,7 +9,9 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#ifndef GLFW_INCLUDE_NONE  // also set on the command line by the imgui target
 #define GLFW_INCLUDE_NONE
+#endif
 #include <GLFW/glfw3.h>
 
 #include "app/Application.h"
@@ -45,6 +47,12 @@ void HelpMarker(const char* text) {
         ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
     }
+}
+
+// Modals default to wherever the cursor left them; centre them on the viewport.
+void CenterNextPopup() {
+    const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 }
 
 std::string FormatDuration(float seconds, float rate) {
@@ -147,6 +155,8 @@ void Application::DrawUi() {
         ImGui::OpenPopup("About##dialog");
         m_showAbout = false;
     }
+    CenterNextPopup();
+    ImGui::SetNextWindowSizeConstraints(ImVec2(380.0f, 0.0f), ImVec2(460.0f, FLT_MAX));
     if (ImGui::BeginPopupModal("About##dialog", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::SeparatorText("FBX Animation Merger");
         ImGui::TextUnformatted("Merge animation clips from separate FBX files onto one rig,\n"
@@ -688,7 +698,11 @@ void Application::DrawExportPopup() {
         m_openExportPopup = false;
     }
 
-    ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Appearing);
+    // AlwaysAutoResize fits the window to its content, and the widgets below ask for
+    // "all remaining width" - left alone the two feed each other and the dialog ends
+    // up as wide as the display. Constraints bound the width; height still auto-fits.
+    CenterNextPopup();
+    ImGui::SetNextWindowSizeConstraints(ImVec2(460.0f, 0.0f), ImVec2(520.0f, FLT_MAX));
     if (!ImGui::BeginPopupModal("Export##dialog", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
 
     static const char* kFormatNames[] = {"FBX (binary 7.4)", "FBX (ASCII)", "glTF 2.0 binary (.glb)",
