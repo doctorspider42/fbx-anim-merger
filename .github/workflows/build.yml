@@ -35,21 +35,28 @@ jobs:
           key: deps-${{ runner.os }}-${{ hashFiles('cmake/Dependencies.cmake') }}
           restore-keys: deps-${{ runner.os }}-
 
+      # Resolves whichever Visual Studio the runner image happens to ship, so the
+      # workflow does not break every time the image rolls to a new VS version.
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Configure
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --parallel
 
       # Synthetic rig -> FBX -> import -> merge -> FBX/GLB -> re-parse. No GPU needed.
       - name: Pipeline self-test
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: ctest --test-dir build --output-on-failure
 
       - name: Stage package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item build/bin/Release/FbxAnimMerger.exe dist/
+          Copy-Item build/bin/FbxAnimMerger.exe dist/
           Copy-Item README.md, LICENSE, THIRD_PARTY_LICENSES.md dist/
 
       - name: Upload build
