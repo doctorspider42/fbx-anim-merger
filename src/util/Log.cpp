@@ -20,9 +20,33 @@ void Log::Push(LogLevel level, std::string text) {
     std::fprintf(level == LogLevel::Error ? stderr : stdout, "%s%s\n", prefix, text.c_str());
 
     std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_file.is_open()) {
+        m_file << prefix << text << '\n';
+        m_file.flush();  // the interesting line is usually the last one before a crash
+    }
     m_entries.push_back({level, std::move(text)});
     while (m_entries.size() > kMaxEntries) m_entries.pop_front();
     dirty = true;
+}
+
+void Log::OpenFile(const std::string& path) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_file.open(path, std::ios::out | std::ios::trunc);
+    if (m_file.is_open()) {
+        m_filePath = path;
+        for (const LogEntry& entry : m_entries) m_file << entry.text << '\n';
+        m_file.flush();
+    }
+}
+
+std::string Log::ToText() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::string out;
+    for (const LogEntry& entry : m_entries) {
+        out += entry.text;
+        out += '\n';
+    }
+    return out;
 }
 
 void Log::Clear() {

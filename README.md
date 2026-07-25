@@ -46,10 +46,15 @@ rate (30 fps by default) instead of trying to preserve every DCC's tangent model
 FBX that usually go wrong — pre/post rotations, geometric transforms, unit and
 axis conversion, skin clusters.
 
-**Export uses [Assimp](https://github.com/assimp/assimp)** as a writer only.
-Assimp 5.4.3 has a bug in its FBX exporter (`to_ktime` truncates keyframe times to
-whole seconds, which destroys every clip); the build applies a one-line fix at
-configure time — see [`cmake/patches/FixAssimpFbxKeyTimes.cmake`](cmake/patches/FixAssimpFbxKeyTimes.cmake).
+**Export uses [Assimp](https://github.com/assimp/assimp)** as a writer only. Two
+bugs in 5.4.3 are fixed by one-line patches applied at configure time — see
+[`cmake/patches/PatchAssimp.cmake`](cmake/patches/PatchAssimp.cmake):
+
+- its FBX exporter truncates keyframe times to whole seconds, destroying every clip;
+- its glTF2 exporter throws when a clip's name matches another clip's
+  `<name>_<channelIndex>` id, which is exactly what happens once you merge a second
+  Mixamo take (they are all named `mixamo.com`).
+
 The exported FBX declares its own `UnitScaleFactor`, so it round-trips correctly
 whatever export scale you pick.
 

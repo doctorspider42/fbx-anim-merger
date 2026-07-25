@@ -36,13 +36,21 @@ attribution notice) alongside the binary.
 
 ## Modifications made to dependencies
 
-- **Assimp 5.4.3** — `code/AssetLib/FBX/FBXExporter.cpp`, function `to_ktime`.
-  Upstream truncates keyframe times to whole seconds before scaling to FBX time
-  units, which collapses every key of a sub-second-spaced clip and makes exported
-  FBX animation unreadable. The build applies a one-line fix at configure time
-  (multiply, then truncate). See
-  [`cmake/patches/FixAssimpFbxKeyTimes.cmake`](cmake/patches/FixAssimpFbxKeyTimes.cmake).
-  The modification is noted here as required by BSD 3-Clause.
+Two one-line fixes are applied to **Assimp 5.4.3** at configure time by
+[`cmake/patches/PatchAssimp.cmake`](cmake/patches/PatchAssimp.cmake). They are
+noted here as required by BSD 3-Clause.
+
+- `code/AssetLib/FBX/FBXExporter.cpp`, function `to_ktime`. Upstream truncates
+  keyframe times to whole seconds before scaling to FBX time units, which collapses
+  every key of a sub-second-spaced clip and makes exported FBX animation unreadable
+  (assimp's own importer reads back zero animations). Fixed by multiplying first,
+  then truncating.
+- `code/AssetLib/glTF2/glTF2Exporter.cpp`, `ExportAnimations`. Upstream registers an
+  animation's glTF id as the raw clip name while giving each of its channels the id
+  `<clipName>_<channelIndex>` via `FindUniqueID`. A clip named `X_3` therefore
+  collides with channel 3 of clip `X` and `LazyDict::Create` throws. Fixed by routing
+  the animation id through `FindUniqueID` as well; the human-readable name is
+  untouched.
 
 ## Licence texts
 

@@ -71,11 +71,12 @@ FetchContent_Declare(assimp
 
 FetchContent_MakeAvailable(glfw glm imgui ufbx stb nfd assimp)
 
-# assimp 5.4.3 writes unusable FBX animation key times; see the script for details.
-# Applied post-populate so it also repairs an already-checked-out source tree.
+# assimp 5.4.3 writes unusable FBX animation key times and throws on clip names that
+# collide with its own channel ids; see the script for details. Applied post-populate
+# so it also repairs an already-checked-out source tree.
 execute_process(
     COMMAND ${CMAKE_COMMAND} -DASSIMP_SOURCE_DIR=${assimp_SOURCE_DIR}
-            -P ${CMAKE_CURRENT_LIST_DIR}/patches/FixAssimpFbxKeyTimes.cmake
+            -P ${CMAKE_CURRENT_LIST_DIR}/patches/PatchAssimp.cmake
     RESULT_VARIABLE _fam_patch_result
     OUTPUT_VARIABLE _fam_patch_output
     ERROR_VARIABLE  _fam_patch_output)

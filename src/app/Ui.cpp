@@ -676,27 +676,76 @@ void Application::DrawSettingsPanel() {
 void Application::DrawLogPanel() {
     ImGui::Begin(kLogWindow);
 
-    if (ImGui::SmallButton("Clear")) Log::Get().Clear();
+    const std::deque<LogEntry> entries = Log::Get().Snapshot();
+
+    if (ImGui::SmallButton("Copy all")) ImGui::SetClipboardText(Log::Get().ToText().c_str());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear")) {
+        Log::Get().Clear();
+        m_selectedLogLine = -1;
+    }
     ImGui::SameLine();
     static bool autoScroll = true;
     ImGui::Checkbox("Auto-scroll", &autoScroll);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::BeginItemTooltip()) {
+        ImGui::TextUnformatted("Click a line to select it, Ctrl+C copies it.\n"
+                               "Right-click for a menu. With nothing selected Ctrl+C takes "
+                               "the whole log.");
+        if (!Log::Get().FilePath().empty()) {
+            ImGui::Separator();
+            ImGui::Text("Also written to: %s", Log::Get().FilePath().c_str());
+        }
+        ImGui::EndTooltip();
+    }
 
     ImGui::Separator();
     ImGui::BeginChild("##logscroll", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_HorizontalScrollbar);
 
-    const std::deque<LogEntry> entries = Log::Get().Snapshot();
+    if (m_selectedLogLine >= static_cast<int>(entries.size())) m_selectedLogLine = -1;
+
     ImGuiListClipper clipper;
     clipper.Begin(static_cast<int>(entries.size()));
     while (clipper.Step()) {
         for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
             const LogEntry& entry = entries[static_cast<size_t>(i)];
+            ImGui::PushID(i);
+
+            // The Selectable carries an empty label and the text is drawn over it:
+            // using the message as the label would let '##' inside a path or a
+            // message swallow part of the line.
+            const ImVec2 cursor = ImGui::GetCursorPos();
+            if (ImGui::Selectable("##line", m_selectedLogLine == i)) m_selectedLogLine = i;
+
+            if (ImGui::BeginPopupContextItem("##logctx")) {
+                m_selectedLogLine = i;
+                if (ImGui::MenuItem("Copy line")) ImGui::SetClipboardText(entry.text.c_str());
+                if (ImGui::MenuItem("Copy all")) {
+                    ImGui::SetClipboardText(Log::Get().ToText().c_str());
+                }
+                ImGui::EndPopup();
+            }
+
+            ImGui::SetCursorPos(cursor);
             ImGui::PushStyleColor(ImGuiCol_Text, LevelColor(entry.level));
             ImGui::TextUnformatted(entry.text.c_str());
             ImGui::PopStyleColor();
+
+            ImGui::PopID();
         }
     }
     clipper.End();
+
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl &&
+        ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+        if (m_selectedLogLine >= 0 && m_selectedLogLine < static_cast<int>(entries.size())) {
+            ImGui::SetClipboardText(entries[static_cast<size_t>(m_selectedLogLine)].text.c_str());
+        } else {
+            ImGui::SetClipboardText(Log::Get().ToText().c_str());
+        }
+    }
 
     if (autoScroll && Log::Get().dirty) {
         ImGui::SetScrollHereY(1.0f);

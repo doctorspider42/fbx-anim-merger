@@ -32,6 +32,9 @@ const std::vector<FileFilter> kFbxFilters = {{"FBX scene", "fbx"}};
 }  // namespace
 
 int Application::Run() {
+    // Opened before anything else so a failure during start-up still leaves a trace.
+    Log::Get().OpenFile("fbx-anim-merger.log");
+
     if (!Initialize()) {
         Shutdown();
         return 1;
@@ -111,6 +114,9 @@ bool Application::Initialize() {
     m_pose.SetModel(&m_model);
 
     glfwShowWindow(m_window);
+    if (!Log::Get().FilePath().empty()) {
+        LogInfo("Session log: %s", fs::absolute(Log::Get().FilePath()).string().c_str());
+    }
     LogInfo("Ready. File > Import base model... to begin.");
     return true;
 }

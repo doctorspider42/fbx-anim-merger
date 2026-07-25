@@ -523,7 +523,12 @@ ExportResult ExportModel(const Model& source, const std::string& path, const Exp
     const aiReturn status = exporter.Export(&scene, AssimpFormatId(options.format), path, 0);
     if (status != AI_SUCCESS) {
         const char* message = exporter.GetErrorString();
-        result.error = message && *message ? message : "assimp export failed";
+        result.error = std::string("assimp failed to write '") + AssimpFormatId(options.format) +
+                       "'";
+        // assimp swallows the detail on some failure paths, so say so rather than
+        // reporting an empty reason.
+        result.error += (message && *message) ? std::string(": ") + message
+                                              : std::string(" (no reason reported)");
         return result;
     }
 

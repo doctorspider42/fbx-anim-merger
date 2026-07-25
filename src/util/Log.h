@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <deque>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -22,6 +23,14 @@ public:
     void Push(LogLevel level, std::string text);
     void Clear();
 
+    // Mirrors everything to disk, flushed per line, so a crash or a message that
+    // scrolled away is still recoverable. Opt-in: only the application calls this.
+    void OpenFile(const std::string& path);
+    const std::string& FilePath() const { return m_filePath; }
+
+    // Every entry as one blob, for the clipboard.
+    std::string ToText() const;
+
     // Copy is intentional: keeps the UI thread away from the mutex while drawing.
     std::deque<LogEntry> Snapshot() const;
 
@@ -30,6 +39,8 @@ public:
 private:
     mutable std::mutex m_mutex;
     std::deque<LogEntry> m_entries;
+    std::ofstream m_file;
+    std::string m_filePath;
     static constexpr size_t kMaxEntries = 2000;
 };
 

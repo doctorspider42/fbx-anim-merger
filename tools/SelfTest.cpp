@@ -532,6 +532,36 @@ int main() {
               "glb stores V flipped to glTF orientation (0.1 -> 0.9 present in the buffer)");
     }
 
+    // ------------------------------- 8. clip names that collide with channel ids
+    // assimp's glTF2 writer ids each channel "<clipName>_<index>", so a clip named
+    // "clip_1" collides with channel 1 of clip "clip" and the whole export throws.
+    // Mixamo names every take "mixamo.com", so disambiguating duplicates as name_1
+    // walks straight into it on the second clip.
+    std::printf("\n8. Clip names colliding with animation channel ids\n");
+    {
+        Model colliding = MakeRig("clip", 20.0f, 1.0f, 1.0f);  // hip height => 2 tracks
+        Check(colliding.animations[0].tracks.size() >= 2,
+              "base clip has " + std::to_string(colliding.animations[0].tracks.size()) +
+                  " channels (need >= 2 for the collision)");
+
+        Animation second = colliding.animations[0];
+        second.name = "clip_1";  // == channel 1 of "clip"
+        colliding.animations.push_back(second);
+
+        const fs::path collidingGlb = dir / "colliding.glb";
+        ExportOptions options;
+        options.format = ExportFormat::Glb;
+        options.scale = DefaultScaleFor(ExportFormat::Glb);
+
+        const ExportResult result = ExportModel(colliding, collidingGlb.string(), options);
+        if (!result.ok) std::printf("    export error: %s\n", result.error.c_str());
+        Check(result.ok, "glb export survives 'clip' + 'clip_1'");
+
+        const ReadBack back = ReadWithAssimp(collidingGlb);
+        Check(back.ok && back.animations == 2,
+              "both clips present in the glb (got " + std::to_string(back.animations) + ")");
+    }
+
     std::printf("\n%s (%d failure(s))\n", g_failures == 0 ? "ALL CHECKS PASSED" : "FAILURES", g_failures);
     return g_failures == 0 ? 0 : 1;
 }

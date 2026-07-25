@@ -75,6 +75,7 @@ private:
 
     // UI state
     int m_renamingAnimation = -1;
+    int m_selectedLogLine = -1;
     char m_renameBuffer[128] = {};
     bool m_openExportPopup = false;
     bool m_layoutInitialized = false;
