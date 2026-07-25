@@ -5,9 +5,12 @@
 #include <cmath>
 #include <filesystem>
 
+#include <cstdio>
+
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
+#include <imgui_internal.h>
 
 #ifndef GLFW_INCLUDE_NONE  // also set on the command line by the imgui target
 #define GLFW_INCLUDE_NONE
@@ -70,7 +73,31 @@ bool Application::Initialize() {
     glfwWindowHint(GLFW_SAMPLES, 0);  // the viewport does its own MSAA
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 
-    m_window = glfwCreateWindow(1600, 950, "FBX Animation Merger", nullptr, nullptr);
+    // Pick a window size in physical pixels: scale the design size by the display's
+    // reported scaling, then keep it inside the work area so a 200% display does not
+    // produce a window larger than the screen.
+    int width = 1600;
+    int height = 950;
+    if (GLFWmonitor* monitor = glfwGetPrimaryMonitor()) {
+        float scaleX = 1.0f;
+        float scaleY = 1.0f;
+        glfwGetMonitorContentScale(monitor, &scaleX, &scaleY);
+        m_dpiScale = std::max(scaleX, 0.25f);
+
+        int areaX = 0;
+        int areaY = 0;
+        int areaWidth = 0;
+        int areaHeight = 0;
+        glfwGetMonitorWorkarea(monitor, &areaX, &areaY, &areaWidth, &areaHeight);
+        if (areaWidth > 0 && areaHeight > 0) {
+            width = std::min(static_cast<int>(1600 * m_dpiScale),
+                             static_cast<int>(areaWidth * 0.9f));
+            height = std::min(static_cast<int>(950 * m_dpiScale),
+                              static_cast<int>(areaHeight * 0.9f));
+        }
+    }
+
+    m_window = glfwCreateWindow(width, height, "FBX Animation Merger", nullptr, nullptr);
     if (!m_window) {
         LogError("Failed to create a window with an OpenGL 3.3 core context.");
         return false;
@@ -86,6 +113,7 @@ bool Application::Initialize() {
 
     LogInfo("OpenGL %s | %s", reinterpret_cast<const char*>(glGetString(GL_VERSION)),
             reinterpret_cast<const char*>(glGetString(GL_RENDERER)));
+    LogInfo("Display scaling %.0f%%, window %dx%d px.", m_dpiScale * 100.0f, width, height);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -93,6 +121,34 @@ bool Application::Initialize() {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = "fbx-anim-merger.ini";
+
+    // Persist the interface scale alongside the docking layout. Registered before the
+    // first frame, which is when ImGui reads the ini back.
+    static ImGuiSettingsHandler uiSettings;
+    uiSettings.TypeName = "FbxAnimMergerUI";
+    uiSettings.TypeHash = ImHashStr("FbxAnimMergerUI");
+    uiSettings.UserData = this;
+    uiSettings.ReadOpenFn = [](ImGuiContext*, ImGuiSettingsHandler* handler,
+                               const char*) -> void* { return handler->UserData; };
+    uiSettings.ReadLineFn = [](ImGuiContext*, ImGuiSettingsHandler*, void* entry,
+                               const char* line) {
+        auto* app = static_cast<Application*>(entry);
+        float zoom = 0.0f;
+        int follow = 0;
+        if (std::sscanf(line, "Zoom=%f", &zoom) == 1) {
+            app->m_uiZoom = std::clamp(zoom, 0.5f, 3.0f);
+        } else if (std::sscanf(line, "FollowSystemDpi=%d", &follow) == 1) {
+            app->m_followSystemDpi = follow != 0;
+        }
+    };
+    uiSettings.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* handler,
+                               ImGuiTextBuffer* out) {
+        auto* app = static_cast<Application*>(handler->UserData);
+        out->appendf("[%s][Settings]\n", handler->TypeName);
+        out->appendf("Zoom=%.3f\n", static_cast<double>(app->m_uiZoom));
+        out->appendf("FollowSystemDpi=%d\n\n", app->m_followSystemDpi ? 1 : 0);
+    };
+    ImGui::AddSettingsHandler(&uiSettings);
 
     ApplyStyle();
 
@@ -152,6 +208,14 @@ void Application::Frame(float deltaSeconds) {
             m_playhead = m_loop ? animation->duration : 0.0f;
         }
     }
+
+    // Track the scaling of whichever monitor the window currently sits on, and apply
+    // any scale change between frames rather than mid-frame.
+    float contentScaleX = 1.0f;
+    float contentScaleY = 1.0f;
+    glfwGetWindowContentScale(m_window, &contentScaleX, &contentScaleY);
+    m_dpiScale = std::max(contentScaleX, 0.25f);
+    UpdateUiScale();
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();

@@ -1,6 +1,7 @@
 // All ImGui panel code lives here to keep Application.cpp about behaviour.
 #include <algorithm>
 #include <cfloat>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -29,6 +30,10 @@ constexpr const char* kAnimationWindow = "Animations";
 constexpr const char* kTimelineWindow = "Timeline";
 constexpr const char* kSettingsWindow = "Settings";
 constexpr const char* kLogWindow = "Log";
+
+// The unscaled reference style. Every scale change re-derives from this rather than
+// scaling the live style, which would compound on each adjustment.
+ImGuiStyle g_baseStyle;
 
 ImVec4 LevelColor(LogLevel level) {
     switch (level) {
@@ -140,6 +145,37 @@ void Application::ApplyStyle() {
     colors[ImGuiCol_TextSelectedBg]      = accentDim;
     colors[ImGuiCol_Text]                = ImVec4(0.878f, 0.890f, 0.910f, 1.00f);
     colors[ImGuiCol_TextDisabled]        = ImVec4(0.478f, 0.494f, 0.529f, 1.00f);
+
+    g_baseStyle = style;
+}
+
+float Application::EffectiveUiScale() const {
+    const float base = m_followSystemDpi ? m_dpiScale : 1.0f;
+    return std::clamp(base * m_uiZoom, 0.5f, 4.0f);
+}
+
+void Application::SetUiZoom(float zoom) {
+    m_uiZoom = std::clamp(zoom, 0.5f, 3.0f);
+    ImGui::MarkIniSettingsDirty();
+}
+
+void Application::UpdateUiScale() {
+    const float scale = EffectiveUiScale();
+    if (std::fabs(scale - m_appliedUiScale) < 0.001f) return;
+
+    // ImGui 1.92 rasterises fonts on demand, so changing the scale mid-session needs
+    // no atlas rebuild: FontScaleMain covers text, ScaleAllSizes covers the metrics.
+    ImGuiStyle& style = ImGui::GetStyle();
+    style = g_baseStyle;
+    style.ScaleAllSizes(scale);
+    style.FontScaleMain = scale;
+
+    const bool first = m_appliedUiScale == 0.0f;
+    m_appliedUiScale = scale;
+    if (!first) {
+        LogInfo("Interface scale %.2fx (display %.0f%%, zoom %.2fx).", scale, m_dpiScale * 100.0f,
+                m_uiZoom);
+    }
 }
 
 void Application::DrawUi() {
@@ -251,6 +287,14 @@ void Application::DrawMenuBar() {
         ImGui::Separator();
         if (ImGui::MenuItem("Frame model", "F", false, m_model.Valid())) FrameCamera();
         if (ImGui::MenuItem("Reset panel layout")) m_resetLayout = true;
+
+        ImGui::Separator();
+        if (ImGui::MenuItem("Zoom in", "Ctrl+=")) SetUiZoom(m_uiZoom * 1.1f);
+        if (ImGui::MenuItem("Zoom out", "Ctrl+-")) SetUiZoom(m_uiZoom / 1.1f);
+        if (ImGui::MenuItem("Reset zoom", "Ctrl+0")) SetUiZoom(1.0f);
+        if (ImGui::MenuItem("Follow system DPI", nullptr, &m_followSystemDpi)) {
+            ImGui::MarkIniSettingsDirty();
+        }
         ImGui::EndMenu();
     }
 
@@ -278,6 +322,16 @@ void Application::DrawMenuBar() {
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_E, false) && m_model.Valid()) m_openExportPopup = true;
     if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false)) m_playing = !m_playing;
     if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F, false) && m_model.Valid()) FrameCamera();
+
+    if (io.KeyCtrl && (ImGui::IsKeyPressed(ImGuiKey_Equal, false) ||
+                       ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false))) {
+        SetUiZoom(m_uiZoom * 1.1f);
+    }
+    if (io.KeyCtrl && (ImGui::IsKeyPressed(ImGuiKey_Minus, false) ||
+                       ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false))) {
+        SetUiZoom(m_uiZoom / 1.1f);
+    }
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_0, false)) SetUiZoom(1.0f);
 }
 
 void Application::DrawViewport() {
@@ -581,6 +635,22 @@ void Application::DrawTimeline() {
 
 void Application::DrawSettingsPanel() {
     ImGui::Begin(kSettingsWindow);
+
+    if (ImGui::CollapsingHeader("Interface", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Checkbox("Follow system DPI", &m_followSystemDpi)) ImGui::MarkIniSettingsDirty();
+        ImGui::SameLine();
+        ImGui::TextDisabled("(display reports %.0f%%)", m_dpiScale * 100.0f);
+        HelpMarker("Windows display scaling. With this off the interface renders one "
+                   "interface pixel per screen pixel, which is physically tiny at 150% or 200%.");
+
+        float zoom = m_uiZoom;
+        ImGui::SetNextItemWidth(-110.0f);
+        if (ImGui::SliderFloat("Zoom", &zoom, 0.5f, 3.0f, "%.2fx")) SetUiZoom(zoom);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("1x")) SetUiZoom(1.0f);
+
+        ImGui::TextDisabled("Effective scale: %.2fx   (Ctrl +/- , Ctrl+0)", EffectiveUiScale());
+    }
 
     if (ImGui::CollapsingHeader("Import", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SetNextItemWidth(-110.0f);

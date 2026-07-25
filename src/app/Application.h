@@ -52,6 +52,11 @@ private:
     void DrawExportPopup();
     void ApplyStyle();
 
+    // Interface scaling
+    void UpdateUiScale();
+    void SetUiZoom(float zoom);
+    float EffectiveUiScale() const;
+
     GLFWwindow* m_window = nullptr;
 
     Model m_model;
@@ -80,6 +85,14 @@ private:
     bool m_openExportPopup = false;
     bool m_layoutInitialized = false;
     bool m_resetLayout = false;
+
+    // Windows reports its display scaling through the window content scale. Without
+    // honouring it the whole interface renders 1:1 in pixels and is physically half
+    // the intended size on a 200% display.
+    float m_dpiScale = 1.0f;         // reported by the monitor the window is on
+    float m_uiZoom = 1.0f;           // user multiplier on top of that
+    bool m_followSystemDpi = true;
+    float m_appliedUiScale = 0.0f;   // last value pushed into the style
     bool m_showAbout = false;
     std::string m_lastDirectory;
     std::string m_statusText = "Import an FBX model to get started.";

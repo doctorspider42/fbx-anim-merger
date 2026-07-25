@@ -106,6 +106,23 @@ Both are overridable.
 | Import base model | `Ctrl+O` |
 | Import animations | `Ctrl+I` |
 | Export | `Ctrl+E` |
+| Zoom interface in / out | `Ctrl+=` / `Ctrl+-` |
+| Reset interface zoom | `Ctrl+0` |
+
+## Interface scaling
+
+The interface follows the display's scaling. Windows reports 150% or 200% through
+the window content scale; without honouring it the UI renders one interface pixel
+per screen pixel and ends up physically half the intended size on a HiDPI display.
+
+The scale is re-read every frame, so dragging the window between monitors with
+different scaling adjusts it live rather than only at startup. On top of that,
+`Settings > Interface` has a manual zoom (also `Ctrl+=` / `Ctrl+-` / `Ctrl+0`) and a
+switch to ignore the system value entirely. Both are saved to
+`fbx-anim-merger.ini` alongside the panel layout.
+
+Fonts are re-rasterised at the new size rather than bitmap-stretched, so text stays
+sharp at any scale.
 
 ## Building
 
