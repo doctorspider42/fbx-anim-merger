@@ -6,5 +6,6 @@ cmake-build-*/
 .idea/
 *.user
 *.ini
+*.log
 !.github/**
 CMakeUserPresets.json
