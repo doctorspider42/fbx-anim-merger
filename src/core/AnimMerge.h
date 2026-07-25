@@ -26,6 +26,10 @@ struct MergeOptions {
     // Scale is essentially never animated in character clips, while a mismatched
     // bind scale between rigs distorts the mesh just as badly as translation.
     bool ignoreScaleTracks = true;
+    // Root-bone translation is authored at the source rig's hip height. Copied as
+    // is, a clip from a taller rig leaves the character hovering above the floor.
+    // Re-expresses it relative to the target's rest pose, scaled by hip height.
+    bool retargetRootMotion = true;
     // Drop tracks that resolve to a node which is not part of the target skeleton
     // (mesh nodes, helpers, cameras...). Usually the right thing for clip merging.
     bool skeletonTracksOnly = false;
@@ -39,6 +43,8 @@ struct MergeReport {
     int tracksDropped = 0;
     int translationChannelsStripped = 0;
     int scaleChannelsStripped = 0;
+    int rootTracksRetargeted = 0;
+    float rootMotionScale = 1.0f;
     std::vector<std::string> unmatchedNodes;  // deduplicated, capped
     std::vector<std::string> addedNames;
 };

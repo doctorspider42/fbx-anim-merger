@@ -99,21 +99,27 @@ Both are overridable.
 Requires CMake 3.24+ and a C++20 compiler. All dependencies are fetched
 automatically by CMake, so the first configure needs a network connection.
 
-### MSVC
+### MinGW-w64 (what CI builds and what releases ship)
 
 ```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
 ```
 
 ```bash
 cmake --build build --parallel
 ```
 
-### MinGW-w64
+### MSVC
 
 ```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 ```
+
+MSVC compiles the whole project cleanly (static CRT, so no redistributable is
+needed). It is not what CI ships, because the link step reliably stalls on GitHub's
+hosted Windows runners — reproduced on consecutive runs after every translation
+unit had already compiled. Local MSVC builds are unaffected as far as we know; if
+you hit the same stall, MinGW is the supported path.
 
 The binary lands in `build/bin/`.
 

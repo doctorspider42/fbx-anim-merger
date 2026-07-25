@@ -34,8 +34,11 @@ void Check(bool condition, const std::string& what) {
 }
 
 // A two-bone rig with a box skinned across the joint. `boneLength` is the offset of
-// the second bone, i.e. this rig's proportions.
-Model MakeRig(const std::string& clipName, float twistDegrees, float boneLength = 1.0f) {
+// the second bone and `hipHeight` lifts the root bone off the scene root - together
+// they stand in for a character rig's proportions. A non-zero `hipHeight` also gives
+// the clip a root-motion track that bobs by 10% of that height.
+Model MakeRig(const std::string& clipName, float twistDegrees, float boneLength = 1.0f,
+              float hipHeight = 0.0f) {
     Model model;
 
     Node root;
@@ -43,6 +46,7 @@ Model MakeRig(const std::string& clipName, float twistDegrees, float boneLength 
     Node boneA;
     boneA.name = "Bone_A";
     boneA.parent = 0;
+    boneA.translation = glm::vec3(0.0f, hipHeight, 0.0f);
     Node boneB;
     boneB.name = "Bone_B";
     boneB.parent = 1;
@@ -51,10 +55,12 @@ Model MakeRig(const std::string& clipName, float twistDegrees, float boneLength 
     model.nodes = {root, boneA, boneB};
     model.RebuildHierarchy();
 
-    // Bind pose globals: A at origin, B one bone length up.
-    model.skeleton.bones.push_back({1, glm::mat4(1.0f)});
+    // Bind pose globals: A at hip height, B one bone length above it.
     model.skeleton.bones.push_back(
-        {2, glm::inverse(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, boneLength, 0.0f)))});
+        {1, glm::inverse(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, hipHeight, 0.0f)))});
+    model.skeleton.bones.push_back(
+        {2, glm::inverse(glm::translate(glm::mat4(1.0f),
+                                        glm::vec3(0.0f, hipHeight + boneLength, 0.0f)))});
     model.skeleton.boneByName = {{"Bone_A", 0}, {"Bone_B", 1}};
 
     Material material;
@@ -119,9 +125,31 @@ Model MakeRig(const std::string& clipName, float twistDegrees, float boneLength 
         track.scales.push_back({t, glm::vec3(1.0f)});
     }
     anim.tracks.push_back(track);
+
+    if (hipHeight > 0.0f) {
+        NodeTrack rootTrack;
+        rootTrack.nodeName = "Bone_A";
+        rootTrack.nodeIndex = 1;
+        for (int f = 0; f < frames; ++f) {
+            const float t = static_cast<float>(f) / 30.0f;
+            const float bob = hipHeight * 0.1f * std::sin(t * 6.2831853f);
+            rootTrack.positions.push_back({t, glm::vec3(0.0f, hipHeight + bob, 0.0f)});
+            rootTrack.rotations.push_back({t, glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+            rootTrack.scales.push_back({t, glm::vec3(1.0f)});
+        }
+        anim.tracks.push_back(rootTrack);
+    }
+
     model.animations.push_back(anim);
 
     return model;
+}
+
+const NodeTrack* FindTrack(const Animation& anim, const std::string& nodeName) {
+    for (const NodeTrack& track : anim.tracks) {
+        if (track.nodeName == nodeName) return &track;
+    }
+    return nullptr;
 }
 
 bool WriteFbx(const Model& model, const fs::path& path) {
@@ -292,6 +320,60 @@ int main() {
         naive.Evaluate(&verbatim.animations[1], 0.3f);
         Check(std::fabs(naive.Globals()[2][3].y - kTargetBoneLength) < 1.0e-3f,
               "re-applying the policy restores the target's proportions");
+    }
+
+    // ---------------------------------- 3c. root motion lands on the target's floor
+    // A clip authored on a 1.0 m rig must not leave a 1.6 m character hovering.
+    std::printf("\n3c. Root motion retargeted to the target rig\n");
+    {
+        constexpr float kTargetHip = 1.6f;
+        constexpr float kSourceHip = 1.0f;
+
+        Model tall = MakeRig("Idle", 20.0f, 1.6f, kTargetHip);
+        Model shortRig = MakeRig("Walk", 20.0f, 1.0f, kSourceHip);
+        shortRig.sourcePath = "walk.fbx";
+        for (Animation& anim : shortRig.animations) anim.sourceFile = "walk.fbx";
+
+        MergeOptions retarget;
+        const MergeReport report = MergeAnimations(tall, shortRig, retarget);
+        Check(report.rootTracksRetargeted == 1, "root track retargeted");
+        Check(std::fabs(report.rootMotionScale - kTargetHip / kSourceHip) < 1.0e-3f,
+              "hip-height ratio " + std::to_string(report.rootMotionScale) + " (expected 1.6)");
+
+        const NodeTrack* root = FindTrack(tall.animations.back(), "Bone_A");
+        Check(root != nullptr && !root->positions.empty(), "merged clip kept its root track");
+        if (root != nullptr && !root->positions.empty()) {
+            const float start = root->positions.front().value.y;
+            Check(std::fabs(start - kTargetHip) < 1.0e-3f,
+                  "root starts at the target's hip height " + std::to_string(kTargetHip) +
+                      " m (got " + std::to_string(start) + ")");
+
+            float amplitude = 0.0f;
+            for (const auto& key : root->positions) {
+                amplitude = std::max(amplitude, std::fabs(key.value.y - kTargetHip));
+            }
+            // 10% bob on a 1.0 m rig, scaled by 1.6.
+            Check(std::fabs(amplitude - 0.16f) < 5.0e-3f,
+                  "bob scaled with the rig (" + std::to_string(amplitude) + " m, expected 0.16)");
+        }
+
+        // Without retargeting the character is left standing at the source's height -
+        // exactly the symptom this guards against.
+        Model naive = MakeRig("Idle", 20.0f, 1.6f, kTargetHip);
+        MergeOptions noRetarget;
+        noRetarget.retargetRootMotion = false;
+        MergeAnimations(naive, shortRig, noRetarget);
+        const NodeTrack* naiveRoot = FindTrack(naive.animations.back(), "Bone_A");
+        Check(naiveRoot != nullptr && !naiveRoot->positions.empty() &&
+                  std::fabs(naiveRoot->positions.front().value.y - kSourceHip) < 1.0e-3f,
+              "retargeting off reproduces the source hip height (the floating bug)");
+
+        // And the retroactive path removes the offset too.
+        const MergeReport fixed = ApplyTrackPolicy(naive, retarget);
+        const NodeTrack* fixedRoot = FindTrack(naive.animations.back(), "Bone_A");
+        Check(fixed.rootTracksRetargeted == 1 && fixedRoot != nullptr &&
+                  std::fabs(fixedRoot->positions.front().value.y - kTargetHip) < 1.0e-3f,
+              "'apply to loaded clips' re-anchors the root onto the rest pose");
     }
 
     // ---------------------------------------------------------- 4. sampling

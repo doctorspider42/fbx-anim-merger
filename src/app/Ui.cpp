@@ -184,29 +184,31 @@ void Application::DrawDockSpace() {
 
     const ImGuiID dockspaceId = ImGui::GetID("MainDockSpace");
 
-    if (!m_layoutInitialized) {
-        m_layoutInitialized = true;
-        if (ImGui::DockBuilderGetNode(dockspaceId) == nullptr) {
-            ImGui::DockBuilderRemoveNode(dockspaceId);
-            ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
-            ImGui::DockBuilderSetNodeSize(dockspaceId, viewport->WorkSize);
+    // Build the default layout on a fresh profile, or whenever the user asks for it
+    // back. An existing .ini already carries a node, so a saved layout is preserved.
+    const bool firstRun = !m_layoutInitialized && ImGui::DockBuilderGetNode(dockspaceId) == nullptr;
+    if (firstRun || m_resetLayout) {
+        ImGui::DockBuilderRemoveNode(dockspaceId);
+        ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(dockspaceId, viewport->WorkSize);
 
-            ImGuiID center = dockspaceId;
-            const ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.22f, nullptr, &center);
-            const ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.24f, nullptr, &center);
-            ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.32f, nullptr, &center);
-            const ImGuiID leftBottom = ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.60f, nullptr, nullptr);
-            const ImGuiID bottomRight = ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Right, 0.42f, nullptr, &bottom);
+        ImGuiID center = dockspaceId;
+        const ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.22f, nullptr, &center);
+        const ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.24f, nullptr, &center);
+        ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.30f, nullptr, &center);
+        const ImGuiID bottomRight = ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Right, 0.42f, nullptr, &bottom);
 
-            ImGui::DockBuilderDockWindow(kViewportWindow, center);
-            ImGui::DockBuilderDockWindow(kSceneWindow, left);
-            ImGui::DockBuilderDockWindow(kAnimationWindow, leftBottom);
-            ImGui::DockBuilderDockWindow(kSettingsWindow, right);
-            ImGui::DockBuilderDockWindow(kTimelineWindow, bottom);
-            ImGui::DockBuilderDockWindow(kLogWindow, bottomRight);
-            ImGui::DockBuilderFinish(dockspaceId);
-        }
+        ImGui::DockBuilderDockWindow(kViewportWindow, center);
+        // Same node, so these two come up as tabs on top of each other.
+        ImGui::DockBuilderDockWindow(kAnimationWindow, left);
+        ImGui::DockBuilderDockWindow(kSceneWindow, left);
+        ImGui::DockBuilderDockWindow(kSettingsWindow, right);
+        ImGui::DockBuilderDockWindow(kTimelineWindow, bottom);
+        ImGui::DockBuilderDockWindow(kLogWindow, bottomRight);
+        ImGui::DockBuilderFinish(dockspaceId);
     }
+    m_layoutInitialized = true;
+    m_resetLayout = false;
 
     ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
 
@@ -237,6 +239,7 @@ void Application::DrawMenuBar() {
         ImGui::MenuItem("Bind pose", nullptr, &m_bindPose);
         ImGui::Separator();
         if (ImGui::MenuItem("Frame model", "F", false, m_model.Valid())) FrameCamera();
+        if (ImGui::MenuItem("Reset panel layout")) m_resetLayout = true;
         ImGui::EndMenu();
     }
 
@@ -578,6 +581,11 @@ void Application::DrawSettingsPanel() {
         ImGui::Checkbox("Ignore scale tracks", &m_mergeOptions.ignoreScaleTracks);
         HelpMarker("Character clips almost never animate scale, and a mismatched bind scale "
                    "distorts the mesh the same way stray translation does.");
+
+        ImGui::Checkbox("Retarget root motion", &m_mergeOptions.retargetRootMotion);
+        HelpMarker("Root translation is authored at the source rig's hip height, so a clip from "
+                   "a taller rig leaves the character hovering. Re-anchors it to the base "
+                   "model's rest pose and scales the displacement by the hip-height ratio.");
 
         ImGui::BeginDisabled(m_model.animations.empty());
         if (ImGui::Button("Apply to loaded clips", ImVec2(-FLT_MIN, 0))) {

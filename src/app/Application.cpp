@@ -281,6 +281,10 @@ void Application::ImportAnimationsFrom(const std::string& path) {
         LogInfo("  kept target proportions: stripped %d translation and %d scale channel(s).",
                 report.translationChannelsStripped, report.scaleChannelsStripped);
     }
+    if (report.rootTracksRetargeted > 0) {
+        LogInfo("  retargeted %d root track(s) onto the base rest pose (hip height x%.3f).",
+                report.rootTracksRetargeted, static_cast<double>(report.rootMotionScale));
+    }
 
     for (const std::string& name : report.unmatchedNodes) {
         LogWarn("  unmatched node: %s", name.c_str());
@@ -300,9 +304,9 @@ void Application::ApplyMergePolicyToLoadedClips() {
         return;
     }
     LogSuccess("Re-applied track policy to %d clip(s): %d translation and %d scale channel(s) "
-               "stripped, %d empty track(s) removed.",
+               "stripped, %d root track(s) re-anchored, %d empty track(s) removed.",
                report.animationsAdded, report.translationChannelsStripped,
-               report.scaleChannelsStripped, report.tracksDropped);
+               report.scaleChannelsStripped, report.rootTracksRetargeted, report.tracksDropped);
 }
 
 void Application::DeleteAnimation(int index) {

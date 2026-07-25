@@ -85,6 +85,29 @@ bool IsBoneNode(const Model& model, int nodeIndex) {
     return model.skeleton.boneByName.count(model.nodes[static_cast<size_t>(nodeIndex)].name) != 0;
 }
 
+// Rest-pose world position of a node, walking the parent chain. Only the
+// translation is accumulated through parent rotations, which is all the hip-height
+// heuristic needs and avoids building a full matrix stack.
+glm::vec3 RestGlobalTranslation(const Model& model, int nodeIndex) {
+    glm::mat4 accumulated(1.0f);
+    std::vector<int> chain;
+    for (int i = nodeIndex; i >= 0; i = model.nodes[static_cast<size_t>(i)].parent) {
+        chain.push_back(i);
+    }
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        accumulated *= model.nodes[static_cast<size_t>(*it)].LocalMatrix();
+    }
+    return glm::vec3(accumulated[3]);
+}
+
+// How much taller the target rig stands than the source, measured at the root bone.
+float HipHeightRatio(const Model& target, int targetNode, const Model& source, int sourceNode) {
+    const float targetHeight = RestGlobalTranslation(target, targetNode).y;
+    const float sourceHeight = RestGlobalTranslation(source, sourceNode).y;
+    if (std::fabs(sourceHeight) < 1.0e-3f || std::fabs(targetHeight) < 1.0e-3f) return 1.0f;
+    return glm::clamp(targetHeight / sourceHeight, 0.05f, 20.0f);
+}
+
 template <typename T>
 bool IsConstant(const std::vector<Key<T>>& keys, float epsilon) {
     if (keys.size() < 2) return true;
@@ -188,8 +211,27 @@ MergeReport MergeAnimations(Model& target, const Model& source, const MergeOptio
             NodeTrack bound = track;
             bound.nodeName = target.nodes[static_cast<size_t>(nodeIndex)].name;
             bound.nodeIndex = nodeIndex;
-            ApplyPolicyToTrack(bound, IsBoneNode(target, nodeIndex),
-                               isRootBone[static_cast<size_t>(nodeIndex)], options, report);
+            const bool trackIsRootBone = isRootBone[static_cast<size_t>(nodeIndex)];
+            ApplyPolicyToTrack(bound, IsBoneNode(target, nodeIndex), trackIsRootBone, options,
+                               report);
+
+            // Root motion is the one translation we keep, so it is also the one that
+            // has to be re-expressed in the target rig's proportions: anchor it to the
+            // target's rest pose and scale the displacement by the hip-height ratio.
+            const int sourceNode = source.FindNode(track.nodeName);
+            if (options.retargetRootMotion && trackIsRootBone && !bound.positions.empty() &&
+                sourceNode >= 0) {
+                const glm::vec3 sourceRest = source.nodes[static_cast<size_t>(sourceNode)].translation;
+                const glm::vec3 targetRest = target.nodes[static_cast<size_t>(nodeIndex)].translation;
+                const float ratio = HipHeightRatio(target, nodeIndex, source, sourceNode);
+
+                for (auto& key : bound.positions) {
+                    key.value = targetRest + (key.value - sourceRest) * ratio;
+                }
+                report.rootMotionScale = ratio;
+                ++report.rootTracksRetargeted;
+            }
+
             if (bound.Empty()) {
                 ++report.tracksDropped;
                 continue;
@@ -233,8 +275,23 @@ MergeReport ApplyTrackPolicy(Model& model, const MergeOptions& options) {
             }
             if (nodeIndex < 0) continue;
             track.nodeIndex = nodeIndex;
-            ApplyPolicyToTrack(track, IsBoneNode(model, nodeIndex),
-                               isRootBone[static_cast<size_t>(nodeIndex)], options, report);
+
+            const bool trackIsRootBone = isRootBone[static_cast<size_t>(nodeIndex)];
+            ApplyPolicyToTrack(track, IsBoneNode(model, nodeIndex), trackIsRootBone, options,
+                               report);
+
+            // The originating rig is long gone here, so the hip-height ratio cannot be
+            // recovered. Re-anchoring the first key onto the rest pose still removes the
+            // constant offset that leaves a character floating; the displacement itself
+            // is left at the clip's own magnitude.
+            if (options.retargetRootMotion && trackIsRootBone && !track.positions.empty()) {
+                const glm::vec3 targetRest = model.nodes[static_cast<size_t>(nodeIndex)].translation;
+                const glm::vec3 offset = targetRest - track.positions.front().value;
+                if (glm::length(offset) > 1.0e-4f) {
+                    for (auto& key : track.positions) key.value += offset;
+                    ++report.rootTracksRetargeted;
+                }
+            }
         }
 
         const size_t before = anim.tracks.size();

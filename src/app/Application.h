@@ -78,6 +78,7 @@ private:
     char m_renameBuffer[128] = {};
     bool m_openExportPopup = false;
     bool m_layoutInitialized = false;
+    bool m_resetLayout = false;
     bool m_showAbout = false;
     std::string m_lastDirectory;
     std::string m_statusText = "Import an FBX model to get started.";

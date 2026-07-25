@@ -17,12 +17,31 @@ concurrency:
 
 jobs:
   windows:
-    name: Windows x64 (MSVC)
+    name: Windows x64
     runs-on: windows-latest
+    # A stalled toolchain should fail loudly rather than burn the job limit.
+    timeout-minutes: 45
+
+    defaults:
+      run:
+        shell: msys2 {0}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # MinGW-w64 is the toolchain this project is verified against end to end, and
+      # it links a fully static .exe that runs without any redistributable.
+      - name: Set up MinGW-w64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
 
       # Only the fetched sources are cached; object files are not, so a compiler
       # or flag change can never be served stale.
@@ -35,13 +54,6 @@ jobs:
           key: deps-${{ runner.os }}-${{ hashFiles('cmake/Dependencies.cmake') }}
           restore-keys: deps-${{ runner.os }}-
 
-      # Resolves whichever Visual Studio the runner image happens to ship, so the
-      # workflow does not break every time the image rolls to a new VS version.
-      - name: Set up MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
@@ -53,11 +65,10 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
       - name: Stage package
-        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item build/bin/FbxAnimMerger.exe dist/
-          Copy-Item README.md, LICENSE, THIRD_PARTY_LICENSES.md dist/
+          mkdir -p dist
+          cp build/bin/FbxAnimMerger.exe dist/
+          cp README.md LICENSE THIRD_PARTY_LICENSES.md dist/
 
       - name: Upload build
         uses: actions/upload-artifact@v4
