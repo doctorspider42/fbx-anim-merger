@@ -51,6 +51,74 @@ private:
 
 constexpr size_t kMaxReportedUnmatched = 24;
 
+// Marks bones that have no bone among their ancestors - the hips of a character
+// rig, or one entry per disjoint skeleton. These are the only bones whose
+// translation is motion rather than a restatement of the source rig's proportions.
+std::vector<bool> FindRootBones(const Model& model) {
+    std::vector<bool> isRootBone(model.nodes.size(), false);
+    if (model.skeleton.Empty()) return isRootBone;
+
+    std::vector<bool> isBone(model.nodes.size(), false);
+    for (const Bone& bone : model.skeleton.bones) {
+        if (bone.nodeIndex >= 0 && bone.nodeIndex < static_cast<int>(isBone.size())) {
+            isBone[static_cast<size_t>(bone.nodeIndex)] = true;
+        }
+    }
+
+    for (size_t i = 0; i < model.nodes.size(); ++i) {
+        if (!isBone[i]) continue;
+        bool ancestorIsBone = false;
+        for (int parent = model.nodes[i].parent; parent >= 0;
+             parent = model.nodes[static_cast<size_t>(parent)].parent) {
+            if (isBone[static_cast<size_t>(parent)]) {
+                ancestorIsBone = true;
+                break;
+            }
+        }
+        isRootBone[i] = !ancestorIsBone;
+    }
+    return isRootBone;
+}
+
+bool IsBoneNode(const Model& model, int nodeIndex) {
+    if (nodeIndex < 0) return false;
+    return model.skeleton.boneByName.count(model.nodes[static_cast<size_t>(nodeIndex)].name) != 0;
+}
+
+template <typename T>
+bool IsConstant(const std::vector<Key<T>>& keys, float epsilon) {
+    if (keys.size() < 2) return true;
+    for (size_t i = 1; i < keys.size(); ++i) {
+        if (glm::length(keys[i].value - keys[0].value) > epsilon) return false;
+    }
+    return true;
+}
+
+// Returns true if anything was removed.
+void ApplyPolicyToTrack(NodeTrack& track, bool isBone, bool isRootBone,
+                        const MergeOptions& options, MergeReport& report) {
+    bool stripTranslation = false;
+    switch (options.translationMode) {
+        case TranslationMode::RootBonesOnly:
+            stripTranslation = isBone && !isRootBone;
+            break;
+        case TranslationMode::AnimatedOnly:
+            stripTranslation = IsConstant(track.positions, 1.0e-5f);
+            break;
+        case TranslationMode::CopyAll:
+            break;
+    }
+
+    if (stripTranslation && !track.positions.empty()) {
+        track.positions.clear();
+        ++report.translationChannelsStripped;
+    }
+    if (options.ignoreScaleTracks && !track.scales.empty()) {
+        track.scales.clear();
+        ++report.scaleChannelsStripped;
+    }
+}
+
 }  // namespace
 
 float EstimateCompatibility(const Model& target, const Model& source, const MergeOptions& options) {
@@ -79,6 +147,7 @@ MergeReport MergeAnimations(Model& target, const Model& source, const MergeOptio
     }
 
     const NodeResolver resolver(target, options);
+    const std::vector<bool> isRootBone = FindRootBones(target);
 
     std::vector<int> indices = sourceIndices;
     if (indices.empty()) {
@@ -119,6 +188,12 @@ MergeReport MergeAnimations(Model& target, const Model& source, const MergeOptio
             NodeTrack bound = track;
             bound.nodeName = target.nodes[static_cast<size_t>(nodeIndex)].name;
             bound.nodeIndex = nodeIndex;
+            ApplyPolicyToTrack(bound, IsBoneNode(target, nodeIndex),
+                               isRootBone[static_cast<size_t>(nodeIndex)], options, report);
+            if (bound.Empty()) {
+                ++report.tracksDropped;
+                continue;
+            }
             merged.tracks.push_back(std::move(bound));
             ++report.tracksMatched;
         }
@@ -132,6 +207,39 @@ MergeReport MergeAnimations(Model& target, const Model& source, const MergeOptio
         merged.name = target.MakeUniqueAnimationName(options.namePrefix + src.name);
         report.addedNames.push_back(merged.name);
         target.animations.push_back(std::move(merged));
+        ++report.animationsAdded;
+    }
+
+    return report;
+}
+
+MergeReport ApplyTrackPolicy(Model& model, const MergeOptions& options) {
+    MergeReport report;
+    if (!model.Valid()) return report;
+
+    const std::vector<bool> isRootBone = FindRootBones(model);
+
+    for (Animation& anim : model.animations) {
+        // Clips that demonstrably came from the base file belong to this exact rig.
+        // An unknown origin is treated as merged: unset paths must not be read as a
+        // match against an unset sourcePath.
+        if (!model.sourcePath.empty() && anim.sourceFile == model.sourcePath) continue;
+
+        for (NodeTrack& track : anim.tracks) {
+            int nodeIndex = track.nodeIndex;
+            if (nodeIndex < 0 || nodeIndex >= static_cast<int>(model.nodes.size()) ||
+                model.nodes[static_cast<size_t>(nodeIndex)].name != track.nodeName) {
+                nodeIndex = model.FindNode(track.nodeName);
+            }
+            if (nodeIndex < 0) continue;
+            track.nodeIndex = nodeIndex;
+            ApplyPolicyToTrack(track, IsBoneNode(model, nodeIndex),
+                               isRootBone[static_cast<size_t>(nodeIndex)], options, report);
+        }
+
+        const size_t before = anim.tracks.size();
+        NormalizeAnimation(anim);
+        report.tracksDropped += static_cast<int>(before - anim.tracks.size());
         ++report.animationsAdded;
     }
 

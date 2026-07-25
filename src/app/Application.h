@@ -31,6 +31,7 @@ private:
     void ImportAnimationFiles();
     void ImportAnimationsFrom(const std::string& path);
     void RunExport();
+    void ApplyMergePolicyToLoadedClips();
     void DeleteAnimation(int index);
     void SelectAnimation(int index);
     void ResetPlayback();

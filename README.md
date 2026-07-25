@@ -21,6 +21,7 @@ nothing proprietary, nothing paid.
   onto the base rig. Track binding is by node name, with namespace stripping
   (`mixamorig:Hips` → `Hips`), `Armature|Hips` path stripping and optional
   case-insensitive matching, so clips from different exporters line up.
+- **Proportions are preserved** — see below.
 - **Merge report** — how many tracks bound, how many were dropped, and exactly
   which node names failed to match. No silent partial merges.
 - **Preview** — GPU-skinned playback on the base model with a timeline, scrub,
@@ -47,6 +48,32 @@ whole seconds, which destroys every clip); the build applies a one-line fix at
 configure time — see [`cmake/patches/FixAssimpFbxKeyTimes.cmake`](cmake/patches/FixAssimpFbxKeyTimes.cmake).
 The exported FBX declares its own `UnitScaleFactor`, so it round-trips correctly
 whatever export scale you pick.
+
+## Why merged clips don't stretch the model
+
+An FBX clip animates `Lcl Translation` on *every* bone, and those values are the
+**source rig's bone lengths**. Copy them verbatim onto a different skeleton and
+you overwrite its rest offsets: limbs snap to the donor's proportions and the mesh
+visibly stretches. This is the single most common failure when pulling a Mixamo
+clip onto a custom character, and it happens even at a 100% bone-name match.
+
+So by default the merge takes **rotation from every bone and translation only from
+root bones** (the hips, where the actual displacement lives). Bone lengths come
+from the base model. `Settings > Merging > Translation` offers:
+
+| Mode | Behaviour |
+|---|---|
+| **Root bone only** (default) | Rotation everywhere, translation only on bones with no bone ancestor. Keeps the target's proportions. |
+| **Only if animated** | Drops translation channels that are constant across the clip — the ones that merely restate the source rig's bind pose. |
+| **Copy everything** | Verbatim. Correct only when both rigs share proportions. |
+
+Scale tracks are ignored by default for the same reason. **Apply to loaded clips**
+re-runs the policy over clips you already merged, so a wrong choice does not mean
+re-importing everything; clips that shipped with the base model are never touched.
+
+This is not full retargeting — bone rotations are copied as-is, so wildly
+different skeleton orientations still need a proper retargeter. It does make
+same-hierarchy, different-proportions rigs (the Mixamo case) work correctly.
 
 ## Units
 

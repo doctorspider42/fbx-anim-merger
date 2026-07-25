@@ -277,6 +277,10 @@ void Application::ImportAnimationsFrom(const std::string& path) {
     LogSuccess("'%s': merged %d clip(s), %d track(s) bound, %d dropped (%.0f%% rig match).",
                fs::path(path).filename().string().c_str(), report.animationsAdded,
                report.tracksMatched, report.tracksDropped, compatibility * 100.0f);
+    if (report.translationChannelsStripped > 0 || report.scaleChannelsStripped > 0) {
+        LogInfo("  kept target proportions: stripped %d translation and %d scale channel(s).",
+                report.translationChannelsStripped, report.scaleChannelsStripped);
+    }
 
     for (const std::string& name : report.unmatchedNodes) {
         LogWarn("  unmatched node: %s", name.c_str());
@@ -285,6 +289,20 @@ void Application::ImportAnimationsFrom(const std::string& path) {
     if (m_currentAnimation < 0 && !m_model.animations.empty()) {
         SelectAnimation(static_cast<int>(m_model.animations.size()) - report.animationsAdded);
     }
+}
+
+void Application::ApplyMergePolicyToLoadedClips() {
+    const MergeReport report = ApplyTrackPolicy(m_model, m_mergeOptions);
+    m_pose.InvalidateBinding();
+
+    if (report.animationsAdded == 0) {
+        LogInfo("No merged clips to adjust (base-model clips are left untouched).");
+        return;
+    }
+    LogSuccess("Re-applied track policy to %d clip(s): %d translation and %d scale channel(s) "
+               "stripped, %d empty track(s) removed.",
+               report.animationsAdded, report.translationChannelsStripped,
+               report.scaleChannelsStripped, report.tracksDropped);
 }
 
 void Application::DeleteAnimation(int index) {

@@ -33,8 +33,9 @@ void Check(bool condition, const std::string& what) {
     if (!condition) ++g_failures;
 }
 
-// A two-bone rig with a box skinned across the joint.
-Model MakeRig(const std::string& clipName, float twistDegrees) {
+// A two-bone rig with a box skinned across the joint. `boneLength` is the offset of
+// the second bone, i.e. this rig's proportions.
+Model MakeRig(const std::string& clipName, float twistDegrees, float boneLength = 1.0f) {
     Model model;
 
     Node root;
@@ -45,15 +46,15 @@ Model MakeRig(const std::string& clipName, float twistDegrees) {
     Node boneB;
     boneB.name = "Bone_B";
     boneB.parent = 1;
-    boneB.translation = glm::vec3(0.0f, 1.0f, 0.0f);
+    boneB.translation = glm::vec3(0.0f, boneLength, 0.0f);
 
     model.nodes = {root, boneA, boneB};
     model.RebuildHierarchy();
 
-    // Bind pose globals: A at origin, B one unit up.
+    // Bind pose globals: A at origin, B one bone length up.
     model.skeleton.bones.push_back({1, glm::mat4(1.0f)});
     model.skeleton.bones.push_back(
-        {2, glm::inverse(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1.0f, 0.0f)))});
+        {2, glm::inverse(glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, boneLength, 0.0f)))});
     model.skeleton.boneByName = {{"Bone_A", 0}, {"Bone_B", 1}};
 
     Material material;
@@ -113,7 +114,7 @@ Model MakeRig(const std::string& clipName, float twistDegrees) {
     for (int f = 0; f < frames; ++f) {
         const float t = static_cast<float>(f) / 30.0f;
         const float angle = glm::radians(twistDegrees) * std::sin(t * 6.2831853f);
-        track.positions.push_back({t, glm::vec3(0.0f, 1.0f, 0.0f)});
+        track.positions.push_back({t, glm::vec3(0.0f, boneLength, 0.0f)});
         track.rotations.push_back({t, glm::angleAxis(angle, glm::vec3(0.0f, 0.0f, 1.0f))});
         track.scales.push_back({t, glm::vec3(1.0f)});
     }
@@ -232,6 +233,66 @@ int main() {
     const MergeReport nsReport = MergeAnimations(base, namespaced, mergeOptions);
     Check(nsReport.animationsAdded == 1 && nsReport.tracksMatched >= 1,
           "namespace-stripped names matched the base rig");
+
+    // ------------------------------------- 3b. proportions across mismatched rigs
+    // Regression guard: a clip authored on a shorter rig must not drag the target's
+    // bones to the source's lengths. That is what stretches a merged character.
+    std::printf("\n3b. Bone proportions survive a cross-rig merge\n");
+    {
+        constexpr float kTargetBoneLength = 1.6f;
+        constexpr float kSourceBoneLength = 1.0f;
+
+        Model tall = MakeRig("Idle", 20.0f, kTargetBoneLength);
+        Model shortRig = MakeRig("Twist", 60.0f, kSourceBoneLength);
+        shortRig.sourcePath = "clip.fbx";
+        for (Animation& anim : shortRig.animations) anim.sourceFile = "clip.fbx";
+
+        MergeOptions keepProportions;  // defaults to TranslationMode::RootBonesOnly
+        const MergeReport kept = MergeAnimations(tall, shortRig, keepProportions);
+        Check(kept.animationsAdded == 1, "clip merged from the shorter rig");
+        Check(kept.translationChannelsStripped >= 1,
+              "non-root bone translation stripped (" +
+                  std::to_string(kept.translationChannelsStripped) + " channel(s))");
+
+        PoseEvaluator evaluator;
+        evaluator.SetModel(&tall);
+        evaluator.Evaluate(&tall.animations[1], 0.3f);
+        const float boneY = evaluator.Globals()[2][3].y;
+        Check(std::fabs(boneY - kTargetBoneLength) < 1.0e-3f,
+              "bone stays at the target's length " + std::to_string(kTargetBoneLength) +
+                  " m (got " + std::to_string(boneY) + ")");
+
+        // And the escape hatch still does the naive thing when asked.
+        Model verbatim = MakeRig("Idle", 20.0f, kTargetBoneLength);
+        verbatim.sourcePath = "base.fbx";
+        for (Animation& anim : verbatim.animations) anim.sourceFile = "base.fbx";
+        MergeOptions copyAll;
+        copyAll.translationMode = TranslationMode::CopyAll;
+        copyAll.ignoreScaleTracks = false;
+        MergeAnimations(verbatim, shortRig, copyAll);
+
+        PoseEvaluator naive;
+        naive.SetModel(&verbatim);
+        naive.Evaluate(&verbatim.animations[1], 0.3f);
+        const float naiveY = naive.Globals()[2][3].y;
+        Check(std::fabs(naiveY - kSourceBoneLength) < 1.0e-3f,
+              "'copy everything' reproduces the source length " +
+                  std::to_string(kSourceBoneLength) + " m (got " + std::to_string(naiveY) + ")");
+
+        // Fixing already-merged clips must give the same result as merging correctly.
+        const MergeReport fixed = ApplyTrackPolicy(verbatim, keepProportions);
+        Check(fixed.animationsAdded == 1,
+              "policy touched only the merged clip, not the base model's own");
+        bool nativeKeptTranslation = false;
+        for (const NodeTrack& track : verbatim.animations[0].tracks) {
+            if (!track.positions.empty()) nativeKeptTranslation = true;
+        }
+        Check(nativeKeptTranslation, "the base model's own clip was left intact");
+        naive.InvalidateBinding();
+        naive.Evaluate(&verbatim.animations[1], 0.3f);
+        Check(std::fabs(naive.Globals()[2][3].y - kTargetBoneLength) < 1.0e-3f,
+              "re-applying the policy restores the target's proportions");
+    }
 
     // ---------------------------------------------------------- 4. sampling
     std::printf("\n4. Pose evaluation\n");

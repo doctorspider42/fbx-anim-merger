@@ -562,6 +562,32 @@ void Application::DrawSettingsPanel() {
     }
 
     if (ImGui::CollapsingHeader("Merging", ImGuiTreeNodeFlags_DefaultOpen)) {
+        static const char* kTranslationModes[] = {"Root bone only (keep proportions)",
+                                                  "Only if animated", "Copy everything"};
+        int translationMode = static_cast<int>(m_mergeOptions.translationMode);
+        ImGui::SetNextItemWidth(-110.0f);
+        if (ImGui::Combo("Translation", &translationMode, kTranslationModes,
+                         IM_ARRAYSIZE(kTranslationModes))) {
+            m_mergeOptions.translationMode = static_cast<TranslationMode>(translationMode);
+        }
+        HelpMarker("A clip's per-bone translation keys are the SOURCE rig's bone lengths. "
+                   "Copying them onto a different rig overwrites its rest offsets and stretches "
+                   "the mesh. 'Root bone only' takes rotation everywhere and keeps translation "
+                   "just on the hips, where the actual motion lives.");
+
+        ImGui::Checkbox("Ignore scale tracks", &m_mergeOptions.ignoreScaleTracks);
+        HelpMarker("Character clips almost never animate scale, and a mismatched bind scale "
+                   "distorts the mesh the same way stray translation does.");
+
+        ImGui::BeginDisabled(m_model.animations.empty());
+        if (ImGui::Button("Apply to loaded clips", ImVec2(-FLT_MIN, 0))) {
+            ApplyMergePolicyToLoadedClips();
+        }
+        ImGui::EndDisabled();
+        HelpMarker("Re-applies the two settings above to clips already merged, so you do not "
+                   "have to re-import them. Clips that came with the base model are left alone.");
+
+        ImGui::Spacing();
         ImGui::Checkbox("Strip namespace", &m_mergeOptions.stripNamespace);
         HelpMarker("Matches 'mixamorig:Hips' or 'Armature|Hips' against 'Hips'.");
         ImGui::Checkbox("Ignore case", &m_mergeOptions.caseInsensitive);
