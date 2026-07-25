@@ -11,6 +11,10 @@ nothing proprietary, nothing paid.
 
 ![status](https://github.com/doctorspider42/fbx-anim-merger/actions/workflows/build.yml/badge.svg)
 
+**[Download the latest Windows build](https://github.com/doctorspider42/fbx-anim-merger/releases/download/latest/FbxAnimMerger-windows-x64.zip)**
+— a single statically linked `.exe`, no runtime to install. Every green build of
+`main` refreshes it; see [all releases](https://github.com/doctorspider42/fbx-anim-merger/releases).
+
 ---
 
 ## What it does
