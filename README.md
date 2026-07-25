@@ -166,8 +166,9 @@ generator or another dependency.
 - Base colour and normal maps survive; specular, roughness, AO and other maps are
   dropped. The preview shades with base colour only — the normal map is
   pass-through, since the mesh carries no tangents.
-- FBX and glTF disagree on where UV (0,0) sits, so V is flipped on glTF export.
-  Textures authored against the FBX convention come out right in both.
+- FBX and glTF disagree on where UV (0,0) sits. Assimp's glTF2 writer already
+  performs that flip internally, so coordinates are passed through untouched;
+  flipping them first cancels it out and ships upside-down textures.
 
 ## Licence
 

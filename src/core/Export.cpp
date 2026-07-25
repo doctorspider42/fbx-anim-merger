@@ -351,13 +351,11 @@ ExportResult ExportModel(const Model& source, const std::string& path, const Exp
     }
     ApplyScale(model, options.scale);
 
-    // glTF places the UV origin at the top-left of the image, FBX at the bottom-left.
-    // Everything is held in FBX convention, so glTF targets need the flip.
-    if (options.format == ExportFormat::Glb || options.format == ExportFormat::GltfSeparate) {
-        for (Mesh& mesh : model.meshes) {
-            for (Vertex& vertex : mesh.vertices) vertex.uv.y = 1.0f - vertex.uv.y;
-        }
-    }
+    // NOTE: do not flip V here. glTF does put the UV origin at the opposite corner
+    // from FBX, but assimp's glTF2 exporter already applies `y = 1 - y` itself
+    // (glTF2Exporter.cpp, "Flip UV y coords"). Flipping first cancels it out and
+    // ships upside-down textures. Its FBX exporter does no such thing, so passing
+    // the FBX-convention coordinates straight through is correct for both targets.
 
     std::vector<int> animIndices = options.animations;
     if (animIndices.empty()) {

@@ -3,9 +3,13 @@
 //   synthetic rig -> FBX -> ufbx import -> merge -> FBX + GLB -> assimp re-import
 //
 // It never touches OpenGL, so it runs on a build machine with no GPU.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -84,9 +88,10 @@ Model MakeRig(const std::string& clipName, float twistDegrees, float boneLength 
             Vertex v;
             v.position = glm::vec3(x, y, z);
             v.normal = glm::normalize(glm::vec3(x, 0.0f, z));
-            // V deliberately spans 0..0.5 rather than 0..1: an asymmetric range is
-            // what makes the glTF V-flip observable in the round-trip check.
-            v.uv = glm::vec2(static_cast<float>(corner) / 4.0f, y * 0.25f);
+            // V deliberately spans 0.1..0.5 rather than 0..1: an asymmetric range is
+            // what makes the glTF V-flip observable, and these particular values
+            // cannot collide with anything else written into the file.
+            v.uv = glm::vec2(static_cast<float>(corner) / 4.0f, 0.1f + y * 0.2f);
             const int bone = (level == 0) ? 0 : (level == 2 ? 1 : 0);
             v.boneIndices = glm::ivec4(bone, 0, 0, 0);
             v.boneWeights = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
@@ -145,6 +150,19 @@ Model MakeRig(const std::string& clipName, float twistDegrees, float boneLength 
     model.animations.push_back(anim);
 
     return model;
+}
+
+// Scans a file for the little-endian byte pattern of a float. glTF buffers store
+// raw floats, so this observes what actually landed in the file - unlike a
+// re-import, where a flip on the way out and a flip on the way in cancel out and
+// hide the very bug we are guarding against.
+bool FileContainsFloat(const fs::path& path, float value) {
+    std::ifstream stream(path, std::ios::binary);
+    const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(stream)),
+                                           std::istreambuf_iterator<char>());
+    unsigned char needle[sizeof(float)];
+    std::memcpy(needle, &value, sizeof(float));
+    return std::search(bytes.begin(), bytes.end(), needle, needle + sizeof(float)) != bytes.end();
 }
 
 const NodeTrack* FindTrack(const Animation& anim, const std::string& nodeName) {
@@ -456,6 +474,9 @@ int main() {
     std::printf("\n7. Embedded textures and UV orientation\n");
     {
         Model textured = MakeRig("Idle", 20.0f);
+        // No clips: keeps animation key times out of the file so the raw float scan
+        // below can only be seeing UV data.
+        textured.animations.clear();
 
         std::vector<uint8_t> raw = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
         raw.resize(264, 0x5A);
@@ -493,14 +514,22 @@ int main() {
         Check(fbxTex.textures == 1 && fbxTex.textureBytes == textureBytes,
               "fbx carries the embedded texture intact");
 
-        // Source V spans 0..0.5. FBX keeps it; glTF's origin is the opposite corner,
-        // so the same range must come back as 0.5..1.
-        Check(std::fabs(fbxTex.minV - 0.0f) < 1.0e-3f && std::fabs(fbxTex.maxV - 0.5f) < 1.0e-3f,
+        // Source V spans 0.1..0.5 in FBX convention. assimp's FBX writer stores it
+        // untouched, so a re-import must hand back the same range.
+        Check(std::fabs(fbxTex.minV - 0.1f) < 1.0e-3f && std::fabs(fbxTex.maxV - 0.5f) < 1.0e-3f,
               "fbx keeps V as authored (" + std::to_string(fbxTex.minV) + ".." +
                   std::to_string(fbxTex.maxV) + ")");
-        Check(std::fabs(glbTex.minV - 0.5f) < 1.0e-3f && std::fabs(glbTex.maxV - 1.0f) < 1.0e-3f,
-              "glb flips V to glTF's top-left origin (" + std::to_string(glbTex.minV) + ".." +
-                  std::to_string(glbTex.maxV) + ")");
+
+        // glTF's origin is the opposite corner, and assimp's glTF2 writer performs
+        // that flip on its own. Checking the bytes on disk rather than a re-import
+        // is the point: the matching flip in assimp's glTF2 *reader* would mask a
+        // double flip, which is exactly how upside-down textures shipped once.
+        // Verified to fail if the flip is applied twice: the buffer then holds
+        // 1-(1-0.1), which is not 0.9. (A companion "0.1 must be absent" assertion
+        // was dropped - float rounding makes it pass under the bug as well, so it
+        // claimed coverage it did not have.)
+        Check(FileContainsFloat(texturedGlb, 1.0f - 0.1f),
+              "glb stores V flipped to glTF orientation (0.1 -> 0.9 present in the buffer)");
     }
 
     std::printf("\n%s (%d failure(s))\n", g_failures == 0 ? "ALL CHECKS PASSED" : "FAILURES", g_failures);
