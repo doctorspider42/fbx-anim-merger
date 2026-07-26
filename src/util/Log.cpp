@@ -17,9 +17,10 @@ void Log::Push(LogLevel level, std::string text) {
         case LogLevel::Error:   prefix = "[error] "; break;
         default: break;
     }
-    std::fprintf(level == LogLevel::Error ? stderr : stdout, "%s%s\n", prefix, text.c_str());
-
     std::lock_guard<std::mutex> lock(m_mutex);
+    if (std::FILE* stream = (level == LogLevel::Error) ? m_consoleError : m_console) {
+        std::fprintf(stream, "%s%s\n", prefix, text.c_str());
+    }
     if (m_file.is_open()) {
         m_file << prefix << text << '\n';
         m_file.flush();  // the interesting line is usually the last one before a crash
@@ -27,6 +28,12 @@ void Log::Push(LogLevel level, std::string text) {
     m_entries.push_back({level, std::move(text)});
     while (m_entries.size() > kMaxEntries) m_entries.pop_front();
     dirty = true;
+}
+
+void Log::SetConsoleStreams(std::FILE* info, std::FILE* error) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_console = info;
+    m_consoleError = error;
 }
 
 void Log::OpenFile(const std::string& path) {

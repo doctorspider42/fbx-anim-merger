@@ -230,8 +230,10 @@ ReadBack ReadWithAssimp(const fs::path& path) {
 
 }  // namespace
 
-int main() {
-    const fs::path dir = fs::temp_directory_path() / "fam_selftest";
+// An explicit working directory lets the CLI tests run against the files this pass
+// produces instead of guessing where the temp directory landed.
+int main(int argc, char** argv) {
+    const fs::path dir = argc > 1 ? fs::path(argv[1]) : fs::temp_directory_path() / "fam_selftest";
     std::error_code ec;
     fs::create_directories(dir, ec);
     std::printf("Working directory: %s\n\n", dir.string().c_str());

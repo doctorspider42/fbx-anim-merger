@@ -68,6 +68,7 @@ jobs:
         run: |
           mkdir -p dist
           cp build/bin/FbxAnimMerger.exe dist/
+          cp build/bin/fam-cli.exe dist/
           cp README.md LICENSE THIRD_PARTY_LICENSES.md dist/
 
       - name: Upload build

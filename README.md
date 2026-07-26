@@ -11,8 +11,11 @@ nothing proprietary, nothing paid.
 
 ![status](https://github.com/doctorspider42/fbx-anim-merger/actions/workflows/build.yml/badge.svg)
 
+The same pipeline is also a command-line tool, `fam-cli` — see
+[Command line](#command-line) — so merges can be batched or scripted.
+
 **[Download the latest Windows build](https://github.com/doctorspider42/fbx-anim-merger/releases/download/latest/FbxAnimMerger-windows-x64.zip)**
-— a single statically linked `.exe`, no runtime to install. Every green build of
+— statically linked `.exe`s, no runtime to install. Every green build of
 `main` refreshes it; see [all releases](https://github.com/doctorspider42/fbx-anim-merger/releases).
 
 ---
@@ -94,6 +97,41 @@ The scene is held in metres. FBX conventionally stores centimetres, glTF mandate
 metres, so the export dialog defaults to **×100 for FBX** and **×1 for glTF/GLB**.
 Both are overridable.
 
+## Command line
+
+`fam-cli` is the same pipeline without the window. It exposes everything the
+interface can do to a scene — import, merge, re-apply the track policy, rename,
+drop and select clips, export — and leaves out only what is inherently interactive
+(viewport, playback, camera).
+
+```bash
+fam-cli merge --base character.fbx --anim clips/ --name-from-file --min-match 80 --out character_merged.glb
+```
+
+| Command | Purpose |
+|---|---|
+| `info <file.fbx>` | scene statistics and clip list; `--nodes` / `--bones` / `--tracks` for detail |
+| `check --base <rig> --anim <clip>` | rig match per file plus the node names that fail to bind; writes nothing |
+| `merge --base <rig> --anim <...> --out <file>` | import, merge, export |
+| `convert --in <file> --out <file>` | re-export one file in another format or scale |
+
+`--anim` is repeatable and takes directories (`--recursive` to descend). The output
+extension picks the format. Every merge setting from `Settings > Merging` has a
+flag: `--translation root|animated|all`, `--[no-]ignore-scale`,
+`--[no-]retarget-root`, `--[no-]strip-namespace`, `--[no-]ignore-case`,
+`--skeleton-tracks-only`, `--prefix`. `--name-from-file` names each merged clip
+after the file it came from, which is what you want for Mixamo — every take in
+every file is called `mixamo.com`.
+
+The report goes to stdout and the log to stderr, so either can be redirected on its
+own; `--json` turns the report into one machine-readable document. `--dry-run`
+runs everything and writes nothing, `--min-match` refuses to write when a source
+matches the rig too poorly, and the exit code is 0 success / 1 failure / 2 bad
+usage. `fam-cli --help merge` lists every flag.
+
+A Claude Code skill that teaches an agent to drive all of this lives in
+[`.claude/skills/fbx-anim-merger/`](.claude/skills/fbx-anim-merger/SKILL.md).
+
 ## Controls
 
 | Action | Input |
@@ -151,7 +189,8 @@ hosted Windows runners — reproduced on consecutive runs after every translatio
 unit had already compiled. Local MSVC builds are unaffected as far as we know; if
 you hit the same stall, MinGW is the supported path.
 
-The binary lands in `build/bin/`.
+Both binaries land in `build/bin/`: `FbxAnimMerger` and `fam-cli`. Pass
+`-DFAM_BUILD_CLI=OFF` to skip the command-line one.
 
 ### Self-test
 
