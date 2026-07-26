@@ -255,7 +255,7 @@ MergeReport MergeAnimations(Model& target, const Model& source, const MergeOptio
     return report;
 }
 
-MergeReport ApplyTrackPolicy(Model& model, const MergeOptions& options) {
+MergeReport ApplyTrackPolicy(Model& model, const MergeOptions& options, bool includeSourceClips) {
     MergeReport report;
     if (!model.Valid()) return report;
 
@@ -265,7 +265,9 @@ MergeReport ApplyTrackPolicy(Model& model, const MergeOptions& options) {
         // Clips that demonstrably came from the base file belong to this exact rig.
         // An unknown origin is treated as merged: unset paths must not be read as a
         // match against an unset sourcePath.
-        if (!model.sourcePath.empty() && anim.sourceFile == model.sourcePath) continue;
+        if (!includeSourceClips && !model.sourcePath.empty() && anim.sourceFile == model.sourcePath) {
+            continue;
+        }
 
         for (NodeTrack& track : anim.tracks) {
             int nodeIndex = track.nodeIndex;

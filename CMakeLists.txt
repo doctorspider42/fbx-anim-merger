@@ -48,6 +48,27 @@ else()
     endif()
 endif()
 
+# Headless front end over the same core. No OpenGL, no windowing, no file dialogs,
+# so it builds and runs anywhere fam_core does.
+option(FAM_BUILD_CLI "Build the command-line front end" ON)
+if(FAM_BUILD_CLI)
+    add_executable(fam_cli
+        src/cli/Main.cpp
+        src/cli/Cli.cpp
+        src/cli/Commands.cpp
+    )
+    set_target_properties(fam_cli PROPERTIES OUTPUT_NAME fam-cli)
+    target_link_libraries(fam_cli PRIVATE fam_core)
+    if(MSVC)
+        target_compile_options(fam_cli PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(fam_cli PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    endif()
+    if(MINGW)
+        target_link_options(fam_cli PRIVATE -static-libgcc -static-libstdc++ -static)
+    endif()
+endif()
+
 add_executable(FbxAnimMerger
     src/main.cpp
 
@@ -109,5 +130,26 @@ if(FAM_BUILD_SELFTEST)
     endif()
 
     enable_testing()
-    add_test(NAME pipeline_roundtrip COMMAND fam_selftest)
+    set(FAM_TEST_DIR ${CMAKE_BINARY_DIR}/selftest)
+    add_test(NAME pipeline_roundtrip COMMAND fam_selftest ${FAM_TEST_DIR})
+    # The rigs it writes are the inputs for the CLI tests below.
+    set_tests_properties(pipeline_roundtrip PROPERTIES FIXTURES_SETUP fam_test_rigs)
+
+    if(FAM_BUILD_CLI)
+        add_test(NAME cli_merge COMMAND fam_cli merge
+            --base ${FAM_TEST_DIR}/base.fbx
+            --anim ${FAM_TEST_DIR}/clip.fbx
+            --name-from-file --min-match 90
+            --out ${FAM_TEST_DIR}/cli_merged.glb)
+        add_test(NAME cli_info COMMAND fam_cli info ${FAM_TEST_DIR}/merged.fbx --json)
+        # A rig match nowhere near the gate must stop the write, not warn and carry on.
+        add_test(NAME cli_min_match_gate COMMAND fam_cli merge
+            --base ${FAM_TEST_DIR}/base.fbx
+            --anim ${FAM_TEST_DIR}/clip.fbx
+            --min-match 101
+            --out ${FAM_TEST_DIR}/cli_blocked.glb)
+        set_tests_properties(cli_min_match_gate PROPERTIES WILL_FAIL TRUE)
+        set_tests_properties(cli_merge cli_info cli_min_match_gate
+                             PROPERTIES FIXTURES_REQUIRED fam_test_rigs)
+    endif()
 endif()

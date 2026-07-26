@@ -28,6 +28,11 @@ public:
     void OpenFile(const std::string& path);
     const std::string& FilePath() const { return m_filePath; }
 
+    // Where the console mirror goes: `info` takes everything below Error, `error`
+    // takes Error. Either may be null to silence that half. The CLI points both at
+    // stderr so stdout can carry nothing but its machine-readable report.
+    void SetConsoleStreams(std::FILE* info, std::FILE* error);
+
     // Every entry as one blob, for the clipboard.
     std::string ToText() const;
 
@@ -41,6 +46,8 @@ private:
     std::deque<LogEntry> m_entries;
     std::ofstream m_file;
     std::string m_filePath;
+    std::FILE* m_console = stdout;
+    std::FILE* m_consoleError = stderr;
     static constexpr size_t kMaxEntries = 2000;
 };
 

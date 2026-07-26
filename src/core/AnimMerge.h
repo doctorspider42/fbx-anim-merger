@@ -60,6 +60,11 @@ MergeReport MergeAnimations(Model& target, const Model& source, const MergeOptio
 // Re-applies the translation/scale policy to clips already sitting in the model, so
 // a wrong choice can be corrected without re-importing every file. Clips that came
 // with the base model itself are left alone - they belong to this exact rig.
-MergeReport ApplyTrackPolicy(Model& model, const MergeOptions& options);
+//
+// `includeSourceClips` lifts that exemption. It exists for the command line, where
+// the input is often a file that was itself produced by a merge: its clips then look
+// native to it, and refusing to touch them would make the fix impossible.
+MergeReport ApplyTrackPolicy(Model& model, const MergeOptions& options,
+                             bool includeSourceClips = false);
 
 }  // namespace fam
