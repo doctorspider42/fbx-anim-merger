@@ -47,6 +47,13 @@ int Application::Run() {
     while (!glfwWindowShouldClose(m_window)) {
         glfwPollEvents();
 
+        // The window manager's close button sets the flag directly, so take it back
+        // and route it through the same confirmation the menu uses.
+        if (glfwWindowShouldClose(m_window)) {
+            glfwSetWindowShouldClose(m_window, GLFW_FALSE);
+            RequestAction(PendingAction::Quit);
+        }
+
         const auto now = std::chrono::steady_clock::now();
         const float delta = std::chrono::duration<float>(now - previous).count();
         previous = now;
@@ -225,6 +232,12 @@ void Application::Frame(float deltaSeconds) {
 
     ImGui::Render();
 
+    // The UI can have replaced the whole model or deleted a clip while it ran
+    // (importing a base model, Delete on a clip), which frees the animation the
+    // playback block above was looking at. Anything held across DrawUi has to be
+    // fetched again rather than reused.
+    animation = CurrentAnimation();
+
     // The viewport texture is sampled while ImGui's draw data is replayed, so
     // rendering it here keeps the image in sync with this frame's UI layout.
     if (m_viewportWidth > 0 && m_viewportHeight > 0) {
@@ -272,6 +285,27 @@ void Application::FrameCamera() {
     m_camera.FrameBounds(min, max);
 }
 
+void Application::RequestAction(PendingAction action) {
+    m_pendingAction = action;
+    // Clips merged onto the rig live nowhere but in memory, so replacing the model
+    // or closing the window throws them away for good.
+    if (m_model.Valid() && m_unsavedChanges) {
+        m_openDiscardPopup = true;
+        return;
+    }
+    RunPendingAction();
+}
+
+void Application::RunPendingAction() {
+    const PendingAction action = m_pendingAction;
+    m_pendingAction = PendingAction::None;
+    switch (action) {
+        case PendingAction::ImportBaseModel: ImportBaseModel(); break;
+        case PendingAction::Quit:            glfwSetWindowShouldClose(m_window, GLFW_TRUE); break;
+        case PendingAction::None:            break;
+    }
+}
+
 void Application::ImportBaseModel() {
     const std::string path = OpenFileDialog(kFbxFilters, m_lastDirectory);
     if (path.empty()) return;
@@ -296,6 +330,7 @@ void Application::ImportBaseModel() {
     ResetPlayback();
     FrameCamera();
     m_hasMergeReport = false;
+    m_unsavedChanges = false;
 
     LogSuccess("Loaded '%s': %zu nodes, %zu meshes, %zu bones, %zu clips, %zu tris (source unit %.4g m).",
                fs::path(path).filename().string().c_str(), result.nodeCount, result.meshCount,
@@ -339,6 +374,7 @@ void Application::ImportAnimationsFrom(const std::string& path) {
     m_lastMergeReport = report;
     m_hasMergeReport = true;
     m_pose.InvalidateBinding();
+    if (report.animationsAdded > 0) m_unsavedChanges = true;
 
     if (report.animationsAdded == 0) {
         LogError("'%s': nothing merged (%.0f%% of animated nodes matched the base rig).",
@@ -375,6 +411,7 @@ void Application::ApplyMergePolicyToLoadedClips() {
         LogInfo("No merged clips to adjust (base-model clips are left untouched).");
         return;
     }
+    m_unsavedChanges = true;
     LogSuccess("Re-applied track policy to %d clip(s): %d translation and %d scale channel(s) "
                "stripped, %d root track(s) re-anchored, %d empty track(s) removed.",
                report.animationsAdded, report.translationChannelsStripped,
@@ -392,6 +429,7 @@ void Application::DeleteAnimation(int index) {
         --m_currentAnimation;
     }
     m_renamingAnimation = -1;
+    m_unsavedChanges = true;
     m_pose.InvalidateBinding();
 }
 
@@ -428,6 +466,7 @@ void Application::RunExport() {
         return;
     }
 
+    m_unsavedChanges = false;
     LogSuccess("Exported '%s' (%zu mesh part(s), %zu clip(s), scale x%.4g).",
                fs::path(path).filename().string().c_str(), result.meshCount, result.animationCount,
                static_cast<double>(options.scale));

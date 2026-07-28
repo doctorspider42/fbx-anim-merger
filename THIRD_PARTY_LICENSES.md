@@ -36,7 +36,7 @@ attribution notice) alongside the binary.
 
 ## Modifications made to dependencies
 
-Two one-line fixes are applied to **Assimp 5.4.3** at configure time by
+Four small fixes are applied to **Assimp 5.4.3** at configure time by
 [`cmake/patches/PatchAssimp.cmake`](cmake/patches/PatchAssimp.cmake). They are
 noted here as required by BSD 3-Clause.
 
@@ -51,6 +51,16 @@ noted here as required by BSD 3-Clause.
   collides with channel 3 of clip `X` and `LazyDict::Create` throws. Fixed by routing
   the animation id through `FindUniqueID` as well; the human-readable name is
   untouched.
+- `code/AssetLib/FBX/FBXExporter.cpp`, `WriteObjects` (skin clusters). Upstream
+  discards `aiBone::mOffsetMatrix` and rebuilds each cluster's bind pose from the
+  node rest pose, which is only the same thing when the file was authored with the
+  skeleton sitting in the bind pose. Every other rig is exported with a wrong bind
+  pose and deforms into garbage. Fixed by writing `mOffsetMatrix` as the cluster
+  `Transform` and deriving `TransformLink` from it.
+- `code/AssetLib/FBX/FBXExporter.cpp`, `WriteObjects` (animation curve nodes).
+  Upstream connects scaling curves to a property called `Lcl Scale`; the FBX property
+  is `Lcl Scaling`, so animated scale is written and then ignored by every reader.
+  Fixed by using the correct name.
 
 ## Licence texts
 

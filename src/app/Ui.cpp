@@ -187,6 +187,7 @@ void Application::DrawUi() {
     DrawSettingsPanel();
     DrawLogPanel();
     DrawExportPopup();
+    DrawDiscardPopup();
 
     if (m_showAbout) {
         ImGui::OpenPopup("About##dialog");
@@ -267,14 +268,16 @@ void Application::DrawMenuBar() {
     if (!ImGui::BeginMenuBar()) return;
 
     if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("Import base model...", "Ctrl+O")) ImportBaseModel();
+        if (ImGui::MenuItem("Import base model...", "Ctrl+O")) {
+            RequestAction(PendingAction::ImportBaseModel);
+        }
         if (ImGui::MenuItem("Import animations...", "Ctrl+I", false, m_model.Valid())) {
             ImportAnimationFiles();
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Export...", "Ctrl+E", false, m_model.Valid())) m_openExportPopup = true;
         ImGui::Separator();
-        if (ImGui::MenuItem("Exit", "Alt+F4")) glfwSetWindowShouldClose(m_window, GLFW_TRUE);
+        if (ImGui::MenuItem("Exit", "Alt+F4")) RequestAction(PendingAction::Quit);
         ImGui::EndMenu();
     }
 
@@ -317,7 +320,9 @@ void Application::DrawMenuBar() {
 
     // Shortcuts (menu bar is always present, so this is a convenient home).
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) ImportBaseModel();
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) {
+        RequestAction(PendingAction::ImportBaseModel);
+    }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_I, false) && m_model.Valid()) ImportAnimationFiles();
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_E, false) && m_model.Valid()) m_openExportPopup = true;
     if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space, false)) m_playing = !m_playing;
@@ -402,7 +407,9 @@ void Application::DrawScenePanel() {
     if (!m_model.Valid()) {
         ImGui::TextDisabled("No model loaded.");
         ImGui::Spacing();
-        if (ImGui::Button("Import base model...", ImVec2(-FLT_MIN, 0))) ImportBaseModel();
+        if (ImGui::Button("Import base model...", ImVec2(-FLT_MIN, 0))) {
+            RequestAction(PendingAction::ImportBaseModel);
+        }
         ImGui::End();
         return;
     }
@@ -533,6 +540,7 @@ void Application::DrawAnimationPanel() {
                                          ImGuiInputTextFlags_AutoSelectAll)) {
                     anim.name = m_model.MakeUniqueAnimationName(m_renameBuffer, i);
                     m_renamingAnimation = -1;
+                    m_unsavedChanges = true;
                 }
                 if (ImGui::IsKeyPressed(ImGuiKey_Escape)) m_renamingAnimation = -1;
             } else {
@@ -824,6 +832,49 @@ void Application::DrawLogPanel() {
 
     ImGui::EndChild();
     ImGui::End();
+}
+
+// Guards the two things that throw the session away: loading another base model over
+// this one, and closing the window. Merged clips are not written anywhere until the
+// user exports, so both are a one-way door.
+void Application::DrawDiscardPopup() {
+    if (m_openDiscardPopup) {
+        ImGui::OpenPopup("Unsaved clips##discard");
+        m_openDiscardPopup = false;
+    }
+
+    CenterNextPopup();
+    ImGui::SetNextWindowSizeConstraints(ImVec2(420.0f, 0.0f), ImVec2(500.0f, FLT_MAX));
+    if (!ImGui::BeginPopupModal("Unsaved clips##discard", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+
+    const bool quitting = m_pendingAction == PendingAction::Quit;
+    ImGui::TextWrapped("%s", quitting ? "Closing now loses the merged clips."
+                                      : "Loading another base model replaces this one and loses "
+                                        "the merged clips.");
+    ImGui::Spacing();
+    ImGui::TextWrapped("They only exist in memory - nothing is written until you export.");
+    ImGui::Spacing();
+
+    if (ImGui::Button("Export first...", ImVec2(150.0f, 0.0f))) {
+        m_pendingAction = PendingAction::None;
+        ImGui::CloseCurrentPopup();
+        m_openExportPopup = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(quitting ? "Close anyway" : "Discard and load", ImVec2(150.0f, 0.0f))) {
+        ImGui::CloseCurrentPopup();
+        RunPendingAction();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(100.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        m_pendingAction = PendingAction::None;
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
 }
 
 void Application::DrawExportPopup() {
