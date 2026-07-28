@@ -564,6 +564,84 @@ int main(int argc, char** argv) {
               "both clips present in the glb (got " + std::to_string(back.animations) + ")");
     }
 
+    // --------------------------------- 9. bind pose that is not the rest pose
+    // A rig exported from a DCC while the armature was posed stores a rest pose that
+    // is not the bind pose; the skin cluster matrices are what say where the skeleton
+    // stood when the mesh was bound. assimp's FBX writer used to ignore them and
+    // rebuild the bind pose from the rest pose, which shreds exactly these models
+    // (the glTF writer never did, hence "the GLB is fine").
+    std::printf("\n9. Bind pose is preserved when it differs from the rest pose\n");
+    {
+        auto bindOf = [](const Model& model, const std::string& bone) {
+            const auto it = model.skeleton.boneByName.find(bone);
+            return it == model.skeleton.boneByName.end()
+                       ? glm::mat4(0.0f)
+                       : model.skeleton.bones[static_cast<size_t>(it->second)].inverseBind;
+        };
+        auto maxDifference = [](const glm::mat4& a, const glm::mat4& b) {
+            float worst = 0.0f;
+            for (int c = 0; c < 4; ++c) {
+                for (int r = 0; r < 4; ++r) worst = std::max(worst, std::fabs(a[c][r] - b[c][r]));
+            }
+            return worst;
+        };
+
+        Model posed = MakeRig("Idle", 20.0f);
+        posed.animations.clear();
+        // Move the rest pose away from the bind pose the inverse-bind matrices record.
+        posed.nodes[1].rotation = glm::angleAxis(glm::radians(30.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        posed.nodes[2].translation += glm::vec3(0.0f, 0.4f, 0.0f);
+
+        const fs::path posedFbx = dir / "posed.fbx";
+        Check(WriteFbx(posed, posedFbx), "posed.fbx written");
+
+        Model posedBack;
+        ImportOptions posedOptions = importOptions;
+        Check(ImportFbx(posedFbx.string(), posedOptions, posedBack).ok, "posed.fbx imported");
+
+        for (const std::string& bone : {std::string("Bone_A"), std::string("Bone_B")}) {
+            const float delta = maxDifference(bindOf(posed, bone), bindOf(posedBack, bone));
+            Check(delta < 2.0e-3f,
+                  bone + " keeps its bind matrix through FBX (max element delta " +
+                      std::to_string(delta) + ")");
+        }
+
+        // And the rest pose is still the posed one - the fix must not quietly move the
+        // skeleton into the bind pose instead.
+        const int restIndex = posedBack.FindNode("Bone_B");
+        Check(restIndex >= 0 &&
+                  std::fabs(posedBack.nodes[static_cast<size_t>(restIndex)].translation.y - 1.4f) <
+                      2.0e-3f,
+              "the authored rest pose survives alongside it");
+    }
+
+    // ------------------------------------------- 10. scale tracks reach the file
+    // assimp's FBX writer linked scaling curves to a property named "Lcl Scale"; the
+    // property is "Lcl Scaling", so the data was written and then ignored by every
+    // reader.
+    std::printf("\n10. Animated scale survives the FBX round trip\n");
+    {
+        Model scaled = MakeRig("Grow", 0.0f);
+        for (NodeTrack& track : scaled.animations[0].tracks) {
+            for (auto& key : track.scales) key.value = glm::vec3(2.0f);
+        }
+
+        const fs::path scaledFbx = dir / "scaled.fbx";
+        Check(WriteFbx(scaled, scaledFbx), "scaled.fbx written");
+
+        Model scaledBack;
+        Check(ImportFbx(scaledFbx.string(), importOptions, scaledBack).ok, "scaled.fbx imported");
+
+        const NodeTrack* track =
+            scaledBack.animations.empty() ? nullptr : FindTrack(scaledBack.animations[0], "Bone_B");
+        Check(track != nullptr && !track->scales.empty(), "the scale track came back");
+        if (track != nullptr && !track->scales.empty()) {
+            const float value = track->scales.front().value.x;
+            Check(std::fabs(value - 2.0f) < 1.0e-3f,
+                  "scale key preserved (got " + std::to_string(value) + ", expected 2)");
+        }
+    }
+
     std::printf("\n%s (%d failure(s))\n", g_failures == 0 ? "ALL CHECKS PASSED" : "FAILURES", g_failures);
     return g_failures == 0 ? 0 : 1;
 }

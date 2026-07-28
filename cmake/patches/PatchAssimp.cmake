@@ -71,3 +71,55 @@ fam_patch_file(
     "Ref<Animation> animRef = mAsset->animations.Create(nameAnim)"
     "Ref<Animation> animRef = mAsset->animations.Create(mAsset->FindUniqueID(nameAnim, \"animation\"))"
     "gltf-animation-id-collision")
+
+# ---------------------------------------------------------------------------
+# 3. FBX exporter throws away aiBone::mOffsetMatrix and rebuilds each skin
+# cluster's bind pose out of the node rest pose instead:
+#
+#     tr = inverse(world transform of the bone node) * world transform of the mesh
+#
+# That is only the bind pose when the file happens to have been authored with the
+# skeleton sitting in it. Plenty of rigs are not - a character exported from
+# Blender or Maya while the armature is posed stores a rest pose that differs from
+# the bind pose, which is exactly what mOffsetMatrix is for. When they differ,
+# every vertex is deformed by the difference and the mesh comes out shredded, with
+# the parts furthest from the root worst hit. The glTF2 writer has no such bug: it
+# writes mOffsetMatrix straight into inverseBindMatrices, which is why the same
+# scene exports correctly to GLB and not to FBX.
+#
+# The exporter's own comment ("TODO, FIXME: this won't work if anything is not in
+# the bind pose") acknowledges it, and the guard that was meant to catch the case
+# is dead code - `not_in_bind_pose` is never filled in.
+#
+# Take the cluster transform from mOffsetMatrix whenever a bone supplied one, and
+# derive TransformLink from it so the pair stays consistent:
+#   Transform     = geometry -> bone at bind time  (mOffsetMatrix)
+#   TransformLink = bone -> world at bind time     (mesh world * Transform^-1)
+# Nodes in the skeleton chain that carry no aiBone keep the old derivation.
+# ---------------------------------------------------------------------------
+fam_patch_file(
+    "code/AssetLib/FBX/FBXExporter.cpp"
+    "tr = b->mOffsetMatrix"
+    "            aiMatrix4x4 tr = inverse_bone_xform * mesh_xform;"
+    "            aiMatrix4x4 tr = inverse_bone_xform * mesh_xform;
+            if (b) {
+                tr = b->mOffsetMatrix;
+                bone_xform = tr;
+                bone_xform.Inverse();
+                bone_xform = mesh_xform * bone_xform;
+            }"
+    "fbx-bind-pose-from-offset-matrix")
+
+# ---------------------------------------------------------------------------
+# 4. FBX exporter connects every scaling curve to a property called "Lcl Scale".
+# The property is "Lcl Scaling" - the exporter's own transform_types table spells
+# it correctly, and so do the two other uses in the same file. The curve data is
+# written out fine, it is just linked to a property that does not exist, so every
+# reader silently ignores it and animated scale is lost on export.
+# ---------------------------------------------------------------------------
+fam_patch_file(
+    "code/AssetLib/FBX/FBXExporter.cpp"
+    "ids[2], \"S\", S, \"Lcl Scaling\""
+    "ids[2], \"S\", S, \"Lcl Scale\""
+    "ids[2], \"S\", S, \"Lcl Scaling\""
+    "fbx-scale-curve-property-name")

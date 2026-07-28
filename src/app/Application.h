@@ -27,6 +27,12 @@ private:
     void Frame(float deltaSeconds);
 
     // -------------------------------------------------------------- actions
+    // Anything that would throw away merged clips goes through here first, so the
+    // user gets a chance to export before the work disappears.
+    enum class PendingAction { None, ImportBaseModel, Quit };
+    void RequestAction(PendingAction action);
+    void RunPendingAction();
+
     void ImportBaseModel();
     void ImportAnimationFiles();
     void ImportAnimationsFrom(const std::string& path);
@@ -50,6 +56,7 @@ private:
     void DrawSettingsPanel();
     void DrawLogPanel();
     void DrawExportPopup();
+    void DrawDiscardPopup();
     void ApplyStyle();
 
     // Interface scaling
@@ -85,6 +92,11 @@ private:
     bool m_openExportPopup = false;
     bool m_layoutInitialized = false;
     bool m_resetLayout = false;
+
+    // Merged clips only exist in memory until they are exported.
+    bool m_unsavedChanges = false;
+    PendingAction m_pendingAction = PendingAction::None;
+    bool m_openDiscardPopup = false;
 
     // Windows reports its display scaling through the window content scale. Without
     // honouring it the whole interface renders 1:1 in pixels and is physically half

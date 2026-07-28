@@ -110,7 +110,11 @@ void PoseEvaluator::Rebind(const Animation* animation) {
 void PoseEvaluator::Evaluate(const Animation* animation, float time) {
     if (!m_model) return;
 
-    if (animation != m_boundAnimation || m_trackForNode.size() != m_model->nodes.size()) {
+    // The animation pointer alone is not enough to tell a rebind is unnecessary: a
+    // freed clip's address can be handed straight back to its replacement. The sizes
+    // catch that case, so a missed InvalidateBinding cannot index out of bounds.
+    if (animation != m_boundAnimation || m_trackForNode.size() != m_model->nodes.size() ||
+        (animation != nullptr && m_cursors.size() != animation->tracks.size())) {
         Rebind(animation);
     }
 

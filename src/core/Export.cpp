@@ -59,6 +59,66 @@ void ApplyScale(Model& model, float scale) {
     }
 }
 
+// Skinned geometry is re-parented to the scene root on the way out (see below), and
+// assimp names the model it creates for it after the mesh. The node the geometry used
+// to hang off is then a leaf with nothing left to do - but it usually carries exactly
+// the same name, so the file ends up with two nodes called e.g. "Body_Geo" and every
+// consumer that binds by name has to guess. Drop the vestige.
+//
+// Only nodes that are pure mesh carriers go: anything with children, a skinning bone,
+// or non-skinned geometry stays where it is.
+void DropOrphanedMeshNodes(Model& model) {
+    if (model.nodes.empty()) return;
+
+    std::vector<bool> orphan(model.nodes.size(), false);
+    std::vector<bool> needed(model.nodes.size(), false);
+
+    for (const Node& node : model.nodes) {
+        if (node.parent >= 0) needed[static_cast<size_t>(node.parent)] = true;
+    }
+    for (const Bone& bone : model.skeleton.bones) {
+        if (bone.nodeIndex >= 0) needed[static_cast<size_t>(bone.nodeIndex)] = true;
+    }
+    for (const Mesh& mesh : model.meshes) {
+        if (mesh.nodeIndex < 0) continue;
+        if (mesh.skinned) {
+            orphan[static_cast<size_t>(mesh.nodeIndex)] = true;
+        } else {
+            needed[static_cast<size_t>(mesh.nodeIndex)] = true;
+        }
+    }
+
+    std::vector<int> remap(model.nodes.size(), -1);
+    std::vector<Node> kept;
+    kept.reserve(model.nodes.size());
+    for (size_t i = 0; i < model.nodes.size(); ++i) {
+        if (orphan[i] && !needed[i]) continue;
+        remap[i] = static_cast<int>(kept.size());
+        kept.push_back(model.nodes[i]);
+    }
+    if (kept.size() == model.nodes.size()) return;
+
+    // Dropped nodes are childless by construction, so every surviving parent survives.
+    for (Node& node : kept) {
+        if (node.parent >= 0) node.parent = remap[static_cast<size_t>(node.parent)];
+    }
+    model.nodes = std::move(kept);
+    model.RebuildHierarchy();
+
+    for (Mesh& mesh : model.meshes) {
+        if (mesh.nodeIndex >= 0) mesh.nodeIndex = remap[static_cast<size_t>(mesh.nodeIndex)];
+    }
+    for (Bone& bone : model.skeleton.bones) {
+        if (bone.nodeIndex >= 0) bone.nodeIndex = remap[static_cast<size_t>(bone.nodeIndex)];
+    }
+    for (Animation& anim : model.animations) {
+        for (NodeTrack& track : anim.tracks) track.nodeIndex = model.FindNode(track.nodeName);
+        anim.tracks.erase(std::remove_if(anim.tracks.begin(), anim.tracks.end(),
+                                         [](const NodeTrack& t) { return t.nodeIndex < 0; }),
+                          anim.tracks.end());
+    }
+}
+
 std::shared_ptr<const std::vector<uint8_t>> ReadFileBytes(const std::string& path) {
     std::ifstream stream(path, std::ios::binary);
     if (!stream) return nullptr;
@@ -249,8 +309,20 @@ aiAnimation* BuildAnimation(const Model& model, const Animation& anim) {
     channels.reserve(anim.tracks.size());
 
     for (const NodeTrack& track : anim.tracks) {
-        const int nodeIndex = track.nodeIndex >= 0 ? track.nodeIndex : model.FindNode(track.nodeName);
-        const Node* rest = nodeIndex >= 0 ? &model.nodes[static_cast<size_t>(nodeIndex)] : nullptr;
+        int nodeIndex = track.nodeIndex;
+        if (nodeIndex < 0 || nodeIndex >= static_cast<int>(model.nodes.size()) ||
+            model.nodes[static_cast<size_t>(nodeIndex)].name != track.nodeName) {
+            nodeIndex = model.FindNode(track.nodeName);
+        }
+        // assimp's FBX writer resolves every channel by name and dereferences the
+        // result without checking, so a channel for a node that is not in the scene
+        // takes the whole export down with it.
+        if (nodeIndex < 0) {
+            LogWarn("Clip '%s': dropped a track for missing node '%s'.", anim.name.c_str(),
+                    track.nodeName.c_str());
+            continue;
+        }
+        const Node* rest = &model.nodes[static_cast<size_t>(nodeIndex)];
 
         auto* channel = new aiNodeAnim();
         channel->mNodeName = ToAssimp(track.nodeName);
@@ -261,9 +333,8 @@ aiAnimation* BuildAnimation(const Model& model, const Animation& anim) {
         channel->mNumPositionKeys = static_cast<unsigned>(posCount);
         channel->mPositionKeys = new aiVectorKey[posCount];
         for (size_t i = 0; i < posCount; ++i) {
-            const glm::vec3 value = i < track.positions.size()
-                                        ? track.positions[i].value
-                                        : (rest ? rest->translation : glm::vec3(0.0f));
+            const glm::vec3 value =
+                i < track.positions.size() ? track.positions[i].value : rest->translation;
             const double time = i < track.positions.size()
                                     ? track.positions[i].time * anim.sampleRate
                                     : 0.0;
@@ -274,9 +345,8 @@ aiAnimation* BuildAnimation(const Model& model, const Animation& anim) {
         channel->mNumRotationKeys = static_cast<unsigned>(rotCount);
         channel->mRotationKeys = new aiQuatKey[rotCount];
         for (size_t i = 0; i < rotCount; ++i) {
-            const glm::quat value = i < track.rotations.size()
-                                        ? track.rotations[i].value
-                                        : (rest ? rest->rotation : glm::quat(1, 0, 0, 0));
+            const glm::quat value =
+                i < track.rotations.size() ? track.rotations[i].value : rest->rotation;
             const double time = i < track.rotations.size()
                                     ? track.rotations[i].time * anim.sampleRate
                                     : 0.0;
@@ -287,8 +357,8 @@ aiAnimation* BuildAnimation(const Model& model, const Animation& anim) {
         channel->mNumScalingKeys = static_cast<unsigned>(scaleCount);
         channel->mScalingKeys = new aiVectorKey[scaleCount];
         for (size_t i = 0; i < scaleCount; ++i) {
-            const glm::vec3 value = i < track.scales.size() ? track.scales[i].value
-                                                            : (rest ? rest->scale : glm::vec3(1.0f));
+            const glm::vec3 value =
+                i < track.scales.size() ? track.scales[i].value : rest->scale;
             const double time = i < track.scales.size() ? track.scales[i].time * anim.sampleRate : 0.0;
             channel->mScalingKeys[i] = aiVectorKey(time, aiVector3D(value.x, value.y, value.z));
         }
@@ -350,6 +420,7 @@ ExportResult ExportModel(const Model& source, const std::string& path, const Exp
         model.meshes.clear();
     }
     ApplyScale(model, options.scale);
+    DropOrphanedMeshNodes(model);
 
     // NOTE: do not flip V here. glTF does put the UV origin at the opposite corner
     // from FBX, but assimp's glTF2 exporter already applies `y = 1 - y` itself

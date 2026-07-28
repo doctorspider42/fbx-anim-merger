@@ -23,7 +23,9 @@ The same pipeline is also a command-line tool, `fam-cli` — see
 ## What it does
 
 - **Import a base model** — geometry, materials, skeleton, skinning, plus any
-  animation takes the file already contains.
+  animation takes the file already contains. Merged clips live in memory until they
+  are exported, so loading another base model over them — or closing the window —
+  asks first.
 - **Textures, embedded or on disk** — packaged characters carry their skins inside
   the FBX and record paths from the machine that built them, so the embedded bytes
   are read straight out of the file. Base colour is shown in the preview; base
@@ -53,14 +55,28 @@ rate (30 fps by default) instead of trying to preserve every DCC's tangent model
 FBX that usually go wrong — pre/post rotations, geometric transforms, unit and
 axis conversion, skin clusters.
 
-**Export uses [Assimp](https://github.com/assimp/assimp)** as a writer only. Two
-bugs in 5.4.3 are fixed by one-line patches applied at configure time — see
+**Export uses [Assimp](https://github.com/assimp/assimp)** as a writer only. Four
+bugs in 5.4.3 are fixed by small patches applied at configure time — see
 [`cmake/patches/PatchAssimp.cmake`](cmake/patches/PatchAssimp.cmake):
 
 - its FBX exporter truncates keyframe times to whole seconds, destroying every clip;
 - its glTF2 exporter throws when a clip's name matches another clip's
   `<name>_<channelIndex>` id, which is exactly what happens once you merge a second
-  Mixamo take (they are all named `mixamo.com`).
+  Mixamo take (they are all named `mixamo.com`);
+- its FBX exporter throws away the inverse bind matrices and reconstructs the bind
+  pose from the rest pose, which shreds any rig whose two differ (see below);
+- its FBX exporter links scaling curves to a property named `Lcl Scale` rather than
+  `Lcl Scaling`, so animated scale is silently dropped by every reader.
+
+### Bind pose vs rest pose
+
+A rig exported from Blender or Maya while its armature was posed stores a rest pose
+that is *not* the pose the mesh was skinned in; the skin clusters carry that as a
+separate matrix per bone. Assimp's FBX writer ignored those matrices and derived the
+bind pose from the node hierarchy instead, so the whole mesh came out deformed by the
+difference — limbs folded into flat sheets, worst at the ends of the chains. Its glTF2
+writer has no such bug, which is why the same scene used to export correctly to GLB
+and not to FBX. The patch makes the FBX writer use the same data.
 
 The exported FBX declares its own `UnitScaleFactor`, so it round-trips correctly
 whatever export scale you pick.
