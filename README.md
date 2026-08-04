@@ -303,21 +303,12 @@ per-user install puts it), then the older and machine-wide locations, then `PATH
 
 ### The icon
 
-[`assets/icon.ico`](assets/icon.ico) is drawn by
-[`tools/make_icon.py`](tools/make_icon.py) — a run cycle where two ghosted poses
-trail one solid figure, which is what the application does to a skeleton. It is
-committed because the Windows resource compiler needs a real `.ico`, but the
-script is the source; edit that and regenerate:
+[`assets/icon.ico`](assets/icon.ico) is a run cycle: two ghosted poses trailing
+one solid figure, drawn as a rig, which is what the application does to a
+skeleton. It holds sizes 16 through 256; the smallest three drop the trail,
+because three figures at 16px are a smudge.
 
-```bash
-python tools/make_icon.py
-```
-
-It needs Pillow and NumPy, and nothing else in the build does, which is why it is
-run by hand rather than from CMake. Sizes 16 through 256 go into the one file; the
-smallest three drop the trail, because three figures at 16px are a smudge.
-
-One `.ico` covers every surface. The executable's resource gives Explorer its
+That one file covers every surface. The executable's resource gives Explorer its
 icon, GLFW loads the same resource by name (`GLFW_ICON`) for the window and the
 taskbar, and Inno Setup's `SetupIconFile` puts it on `setup.exe`.
 

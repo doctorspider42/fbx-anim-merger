@@ -96,7 +96,7 @@ function(fam_add_version_resource target description filename)
     if(NOT _icon_name STREQUAL "")
         set(_icon "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.ico")
         if(NOT EXISTS "${_icon}")
-            message(FATAL_ERROR "${_icon} is missing; regenerate it with tools/make_icon.py")
+            message(FATAL_ERROR "${_icon} is missing; it is a checked-in asset, restore it from git")
         endif()
         # Forward slashes throughout: a backslash in an .rc string is an escape.
         set(FAM_RC_ICON "${_icon_name} ICON \"${_icon}\"")
