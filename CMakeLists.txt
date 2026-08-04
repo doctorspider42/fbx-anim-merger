@@ -70,7 +70,7 @@ if(FAM_BUILD_CLI)
     )
     set_target_properties(fam_cli PROPERTIES OUTPUT_NAME fam-cli)
     target_link_libraries(fam_cli PRIVATE fam_core)
-    fam_add_version_resource(fam_cli "FBX Animation Merger command-line tool" "fam-cli.exe")
+    fam_add_version_resource(fam_cli "FBX Animation Merger command-line tool" "fam-cli.exe" 1)
     if(MSVC)
         target_compile_options(fam_cli PRIVATE /W4 /permissive- /utf-8)
     else()
@@ -100,7 +100,9 @@ add_executable(FbxAnimMerger
 )
 
 target_include_directories(FbxAnimMerger PRIVATE src)
-fam_add_version_resource(FbxAnimMerger "FBX Animation Merger" "FbxAnimMerger.exe")
+# GLFW_ICON: GLFW picks this resource up by name for the window and taskbar, so
+# the window is titled with the icon without a line of code in Application.cpp.
+fam_add_version_resource(FbxAnimMerger "FBX Animation Merger" "FbxAnimMerger.exe" GLFW_ICON)
 
 target_link_libraries(FbxAnimMerger PRIVATE
     fam_core
