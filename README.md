@@ -17,10 +17,11 @@ The same pipeline is also a command-line tool, `fam-cli` — see
 **[Download the latest release](https://github.com/doctorspider42/fbx-anim-merger/releases/latest)**
 — two ways to get it, both statically linked with no runtime to install:
 
-- `FbxAnimMerger-<version>-setup.exe` — a per-user installer (no admin prompt)
-  that puts the app in `%LOCALAPPDATA%\Programs\FbxAnimMerger`, adds Start menu
-  entries and can put `fam-cli` on your `PATH`. Installed copies **update
-  themselves** from GitHub.
+- `FbxAnimMerger-<version>-setup.exe` — installs to
+  `%LOCALAPPDATA%\Programs\FbxAnimMerger` with no admin prompt, adds Start menu
+  entries and can put `fam-cli` on your `PATH`. Its first page also offers an
+  all-users install if you want it somewhere like `Program Files`. Installed
+  copies **update themselves** from GitHub.
 - `FbxAnimMerger-<version>-windows-x64-portable.zip` — unzip and run, nothing
   written outside the folder.
 
@@ -212,12 +213,20 @@ with the release it came from.
 Both ship from the same binaries and differ in exactly one file.
 
 The installer ([`installer/FbxAnimMerger.iss`](installer/FbxAnimMerger.iss), built
-with [Inno Setup](https://jrsoftware.org/isinfo.php)) installs **per user** into
-`%LOCALAPPDATA%\Programs\FbxAnimMerger`. That is deliberate rather than
-`Program Files`: it is what lets the application replace itself without a UAC
-prompt, which is the whole point of shipping an updater. There is no all-users
-option for the same reason. Optional tasks add a desktop icon and put `fam-cli` on
-the user's `PATH`; uninstalling removes both.
+with [Inno Setup](https://jrsoftware.org/isinfo.php)) defaults to a **per-user**
+install into `%LOCALAPPDATA%\Programs\FbxAnimMerger`. That is deliberate rather
+than `Program Files`: it is what lets the application replace itself without a UAC
+prompt, which is the whole point of shipping an updater.
+
+Its first page offers the choice anyway. Picking *Install for all users* elevates,
+after which any location works — `Program Files`, or a folder on another drive.
+The trade is that updating such a copy needs administrator rights every time, and
+the update dialog says so before you commit to it. Picking *Install for me only*
+and then typing a folder you cannot write to is caught on the directory page,
+rather than failing with `Error 5: Access is denied` halfway through copying.
+
+Optional tasks add a desktop icon and put `fam-cli` on the user's `PATH`;
+uninstalling removes both.
 
 The portable zip carries a `PORTABLE` marker file next to the `.exe`. The
 application looks for it at startup, and finding it, never tries to update itself
@@ -231,7 +240,9 @@ on demand). Nothing is downloaded until you say so and nothing about you is sent
 
 When you accept, the installer for the new version is fetched to the temp
 directory and run silently; the application closes so it can be replaced, and the
-installer starts it again afterwards. If clips are merged but not yet exported,
+installer starts it again afterwards. A copy installed for all users cannot be
+replaced without elevation, so that one raises a UAC prompt — the dialog says so
+before you start. If clips are merged but not yet exported,
 the install button stays disabled until you have exported them — they live only in
 memory. Portable copies are offered the new zip to download instead.
 

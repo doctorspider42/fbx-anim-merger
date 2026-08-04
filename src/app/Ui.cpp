@@ -991,6 +991,11 @@ void Application::DrawUpdatePopup() {
     if (state == UpdateState::ReadyToInstall) {
         ImGui::TextWrapped("The installer is downloaded. Installing closes this window and "
                            "reopens it on the new version.");
+        if (InstallNeedsElevation()) {
+            ImGui::Spacing();
+            ImGui::TextWrapped("This copy is installed for all users, so Windows will ask for "
+                               "administrator rights.");
+        }
         if (m_unsavedChanges) {
             ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.98f, 0.75f, 0.30f, 1.0f),

@@ -410,6 +410,27 @@ bool IsPortableBuild() {
 #endif
 }
 
+bool InstallNeedsElevation() {
+#ifdef _WIN32
+    if (IsPortableBuild()) return false;
+    const fs::path exe = ExecutablePath();
+    if (exe.empty()) return false;
+
+    // Asking the ACL the same question the installer will ask is a lot of code for
+    // an answer a probe file gives directly.
+    std::error_code ec;
+    const fs::path probe = exe.parent_path() / ".fam-write-test";
+    {
+        std::ofstream out(probe, std::ios::trunc);
+        if (!out) return true;
+    }
+    fs::remove(probe, ec);
+    return false;
+#else
+    return false;
+#endif
+}
+
 bool OpenInBrowser(const std::string& url) {
     if (url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0) return false;
     // The URL reaches a shell on some platforms, so refuse anything carrying
@@ -591,8 +612,13 @@ bool Updater::LaunchInstaller() {
 #ifdef _WIN32
     // /UPDATE is ours: the script uses it to tell an update apart from a scripted
     // silent deployment, and relaunches the application only for the former.
+    //
+    // Deliberately without /SUPPRESSMSGBOXES. This runs after the window is gone,
+    // so a swallowed error - a declined UAC prompt on a machine-wide install, a
+    // file that could not be replaced - would look exactly like a successful
+    // update that quietly did nothing.
     const std::wstring file = Widen(installer);
-    const std::wstring arguments = L"/SILENT /SUPPRESSMSGBOXES /NORESTART /UPDATE";
+    const std::wstring arguments = L"/SILENT /NORESTART /UPDATE";
     const auto result = reinterpret_cast<INT_PTR>(
         ShellExecuteW(nullptr, L"open", file.c_str(), arguments.c_str(), nullptr, SW_SHOWNORMAL));
     if (result <= 32) {

@@ -47,6 +47,12 @@ int CompareVersions(const std::string& a, const std::string& b);
 // copies are never overwritten in place - there is no installer to hand them to.
 bool IsPortableBuild();
 
+// True when the folder the application lives in is not writable by the current
+// user - an install made machine-wide by choosing "Install for all users". The
+// installer then has to run elevated, so Windows shows a UAC prompt where a
+// per-user install shows nothing.
+bool InstallNeedsElevation();
+
 // Hands a URL to the system browser. Available on every platform.
 bool OpenInBrowser(const std::string& url);
 

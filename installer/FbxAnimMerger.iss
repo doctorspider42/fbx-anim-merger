@@ -50,7 +50,14 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; Per-user by default, because that is what lets the updater replace the
+; application without a UAC prompt. `dialog` adds the install-mode page in front
+; of the wizard, so anyone who wants a machine-wide location - Program Files, or
+; a folder on another drive - can elevate and pick one. That install then costs a
+; UAC prompt on every update, which is the honest trade and is why it is not the
+; default. `commandline` lets a scripted deployment pass /ALLUSERS instead.
 PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog commandline
 ; The updater launches this while the application is still shutting down, so let
 ; Restart Manager deal with whatever is still holding the .exe.
 CloseApplications=yes
@@ -108,6 +115,60 @@ end;
 function RelaunchAfterSilentUpdate: Boolean;
 begin
   Result := WizardSilent and CommandLineHas('/UPDATE');
+end;
+
+// The nearest ancestor of Dir that already exists. Setup creates everything below
+// it, so that is where the permission question is actually decided.
+function ExistingAncestor(Dir: string): string;
+var
+  Previous: string;
+begin
+  Result := RemoveBackslashUnlessRoot(Dir);
+  while (Result <> '') and not DirExists(Result) do
+  begin
+    Previous := Result;
+    Result := ExtractFileDir(Result);
+    // ExtractFileDir of a root returns the root, which would spin forever.
+    if Result = Previous then
+    begin
+      Result := '';
+      exit;
+    end;
+  end;
+end;
+
+function CanCreateDirIn(Parent: string): Boolean;
+var
+  Probe: string;
+begin
+  Probe := AddBackslash(Parent) + 'fam-setup-write-test';
+  Result := CreateDir(Probe);
+  if Result then
+    RemoveDir(Probe);
+end;
+
+// Running unelevated, a protected folder such as "F:\Program Files" only fails
+// once Setup starts copying, as "Error 5: Access is denied" with no hint about
+// what to do. Catching it on the directory page says what actually helps.
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  Parent: string;
+begin
+  Result := True;
+  if (CurPageID <> wpSelectDir) or IsAdminInstallMode then
+    exit;
+
+  Parent := ExistingAncestor(WizardDirValue);
+  if (Parent = '') or CanCreateDirIn(Parent) then
+    exit;
+
+  Result := False;
+  MsgBox('Setup cannot write to' + #13#10#13#10 + WizardDirValue + #13#10#13#10 +
+         'That folder needs administrator rights. Click Back to the first page and choose ' +
+         '"Install for all users" to get them, or pick a folder you own - the default, ' +
+         'under ' + ExpandConstant('{userpf}') + ', needs no rights at all and lets the ' +
+         'application update itself without prompting.',
+         mbError, MB_OK);
 end;
 
 // True when Dir is not already one of the entries in the user's PATH. Without it
