@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon.png" alt="" width="140" height="140">
+</p>
+
 # FBX Animation Merger
 
 A small, fast desktop tool for building an animation library on top of a single
@@ -296,6 +300,26 @@ Building the installer needs Inno Setup's command-line compiler. The script look
 for `ISCC.exe` in `%LOCALAPPDATA%\Programs\Inno Setup 7` first (where the current
 per-user install puts it), then the older and machine-wide locations, then `PATH`;
 `$env:ISCC` overrides all of them.
+
+### The icon
+
+[`assets/icon.ico`](assets/icon.ico) is drawn by
+[`tools/make_icon.py`](tools/make_icon.py) — a run cycle where two ghosted poses
+trail one solid figure, which is what the application does to a skeleton. It is
+committed because the Windows resource compiler needs a real `.ico`, but the
+script is the source; edit that and regenerate:
+
+```bash
+python tools/make_icon.py
+```
+
+It needs Pillow and NumPy, and nothing else in the build does, which is why it is
+run by hand rather than from CMake. Sizes 16 through 256 go into the one file; the
+smallest three drop the trail, because three figures at 16px are a smudge.
+
+One `.ico` covers every surface. The executable's resource gives Explorer its
+icon, GLFW loads the same resource by name (`GLFW_ICON`) for the window and the
+taskbar, and Inno Setup's `SetupIconFile` puts it on `setup.exe`.
 
 ### Self-test
 

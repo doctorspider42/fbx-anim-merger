@@ -76,6 +76,13 @@ message(STATUS "FbxAnimMerger version ${FAM_VERSION} (${FAM_COMMIT})")
 # Attaches a Windows VERSIONINFO resource to `target` so the shipped .exe reports
 # its version in Explorer's property sheet - which is also where the installer
 # and any deployment tooling look for it. A no-op everywhere else.
+#
+# The optional fourth argument is the resource name to give assets/icon.ico. It
+# matters: GLFW loads a resource literally named GLFW_ICON out of the running
+# executable for the window, the taskbar and the alt-tab switcher, so naming it
+# that on the windowed target gets every one of those - plus Explorer, which just
+# takes the first icon group - from a single .ico with nothing to load at run
+# time. Anything without a window can use the conventional numeric 1.
 # ---------------------------------------------------------------------------
 function(fam_add_version_resource target description filename)
     if(NOT WIN32)
@@ -83,7 +90,23 @@ function(fam_add_version_resource target description filename)
     endif()
     set(FAM_RC_DESCRIPTION "${description}")
     set(FAM_RC_FILENAME "${filename}")
+
+    set(_icon_name "${ARGV3}")
+    set(FAM_RC_ICON "")
+    if(NOT _icon_name STREQUAL "")
+        set(_icon "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.ico")
+        if(NOT EXISTS "${_icon}")
+            message(FATAL_ERROR "${_icon} is missing; regenerate it with tools/make_icon.py")
+        endif()
+        # Forward slashes throughout: a backslash in an .rc string is an escape.
+        set(FAM_RC_ICON "${_icon_name} ICON \"${_icon}\"")
+    endif()
+
     set(_rc "${CMAKE_CURRENT_BINARY_DIR}/generated/${target}_version.rc")
     configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Version.rc.in ${_rc} @ONLY)
+    if(NOT _icon_name STREQUAL "")
+        # The .rc only names the .ico, so nothing else would notice it changing.
+        set_source_files_properties(${_rc} PROPERTIES OBJECT_DEPENDS "${_icon}")
+    endif()
     target_sources(${target} PRIVATE ${_rc})
 endfunction()

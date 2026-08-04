@@ -24,6 +24,10 @@
 #ifndef OutDir
   #define OutDir "..\dist"
 #endif
+; Relative to this script, so a hand-run ISCC finds it the same way package.ps1 does.
+#ifndef IconFile
+  #define IconFile "..\assets\icon.ico"
+#endif
 
 [Setup]
 ; Never change AppId: it is what ties an upgrade to the copy already installed.
@@ -42,6 +46,9 @@ DisableProgramGroupPage=yes
 DisableDirPage=auto
 UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
+; Setup.exe carries the application's own icon, so the download in the browser and
+; the UAC prompt on an all-users install both show what is being installed.
+SetupIconFile={#IconFile}
 LicenseFile={#PayloadDir}\LICENSE
 OutputDir={#OutDir}
 OutputBaseFilename=FbxAnimMerger-{#AppVersion}-setup
