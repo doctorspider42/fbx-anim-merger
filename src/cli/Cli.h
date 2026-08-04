@@ -12,10 +12,12 @@
 #include "core/AnimMerge.h"
 #include "core/Export.h"
 #include "core/FbxImport.h"
+#include "util/Version.h"
 
 namespace fam::cli {
 
-inline constexpr const char* kVersion = "0.1.0";
+// One version number for the whole project; see cmake/Version.cmake.
+inline constexpr const char* kVersion = kAppVersion;
 
 enum class Command {
     None,

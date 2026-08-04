@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
             PrintUsage(stdout, options.helpTopic);
             return 0;
         case Command::Version:
-            std::printf("fam-cli %s\n", kVersion);
+            std::printf("fam-cli %s (%s)\n", kVersion, kAppCommit);
             return 0;
         default:
             break;

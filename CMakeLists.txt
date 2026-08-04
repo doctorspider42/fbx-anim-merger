@@ -5,9 +5,20 @@ cmake_minimum_required(VERSION 3.24)
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
 
 project(FbxAnimMerger
-    VERSION 0.1.0
     DESCRIPTION "FBX animation merger / retargeting-free animation library tool"
     LANGUAGES C CXX)
+
+# Derives FAM_VERSION and friends; must come before anything that consumes them.
+# The version is not spelled out in project() because it is not a constant: the
+# patch component is the commit count.
+include(cmake/Version.cmake)
+
+# For the VERSIONINFO resource compiled into each shipped .exe.
+if(WIN32)
+    enable_language(RC)
+endif()
+
+configure_file(cmake/Version.h.in ${CMAKE_BINARY_DIR}/generated/util/Version.h @ONLY)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,7 +48,7 @@ add_library(fam_core STATIC
     src/core/Pose.cpp
     src/core/Export.cpp
 )
-target_include_directories(fam_core PUBLIC src)
+target_include_directories(fam_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(fam_core PUBLIC fam::ufbx glm::glm assimp::assimp)
 if(MSVC)
     target_compile_options(fam_core PRIVATE /W4 /permissive- /utf-8 /bigobj)
@@ -59,6 +70,7 @@ if(FAM_BUILD_CLI)
     )
     set_target_properties(fam_cli PROPERTIES OUTPUT_NAME fam-cli)
     target_link_libraries(fam_cli PRIVATE fam_core)
+    fam_add_version_resource(fam_cli "FBX Animation Merger command-line tool" "fam-cli.exe")
     if(MSVC)
         target_compile_options(fam_cli PRIVATE /W4 /permissive- /utf-8)
     else()
@@ -83,9 +95,12 @@ add_executable(FbxAnimMerger
 
     src/app/Application.cpp
     src/app/Ui.cpp
+
+    src/update/Updater.cpp
 )
 
 target_include_directories(FbxAnimMerger PRIVATE src)
+fam_add_version_resource(FbxAnimMerger "FBX Animation Merger" "FbxAnimMerger.exe")
 
 target_link_libraries(FbxAnimMerger PRIVATE
     fam_core
@@ -106,11 +121,16 @@ else()
 endif()
 
 if(WIN32)
-    target_link_libraries(FbxAnimMerger PRIVATE opengl32)
+    # winhttp/shell32: the updater's HTTPS fetch and its hand-off to the installer.
+    target_link_libraries(FbxAnimMerger PRIVATE opengl32 winhttp shell32)
 else()
     find_package(OpenGL REQUIRED)
     target_link_libraries(FbxAnimMerger PRIVATE OpenGL::GL ${CMAKE_DL_LIBS})
 endif()
+
+# The update check runs on its own thread so the frame loop never waits on the network.
+find_package(Threads REQUIRED)
+target_link_libraries(FbxAnimMerger PRIVATE Threads::Threads)
 
 # MinGW: ship a self-contained binary so the .exe runs outside the dev shell.
 if(MINGW)

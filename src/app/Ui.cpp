@@ -18,6 +18,7 @@
 
 #include "app/Application.h"
 #include "util/Log.h"
+#include "util/Version.h"
 
 namespace fs = std::filesystem;
 
@@ -188,6 +189,7 @@ void Application::DrawUi() {
     DrawLogPanel();
     DrawExportPopup();
     DrawDiscardPopup();
+    DrawUpdatePopup();
 
     if (m_showAbout) {
         ImGui::OpenPopup("About##dialog");
@@ -197,6 +199,10 @@ void Application::DrawUi() {
     ImGui::SetNextWindowSizeConstraints(ImVec2(380.0f, 0.0f), ImVec2(460.0f, FLT_MAX));
     if (ImGui::BeginPopupModal("About##dialog", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::SeparatorText("FBX Animation Merger");
+        ImGui::Text("Version %s", kAppVersion);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%s, %s build)", kAppCommit, IsPortableBuild() ? "portable" : "installed");
+        ImGui::Spacing();
         ImGui::TextUnformatted("Merge animation clips from separate FBX files onto one rig,\n"
                                "preview them, rename them, export to FBX or glTF/GLB.");
         ImGui::Spacing();
@@ -302,6 +308,16 @@ void Application::DrawMenuBar() {
     }
 
     if (ImGui::BeginMenu("Help")) {
+        const bool busy = m_updater.Busy();
+        if (ImGui::MenuItem(busy ? "Checking for updates..." : "Check for updates...", nullptr,
+                            false, !busy)) {
+            CheckForUpdates(true);
+        }
+        if (m_updateState == UpdateState::Available || m_updateState == UpdateState::ReadyToInstall) {
+            if (ImGui::MenuItem("Update available...")) m_openUpdatePopup = true;
+        }
+        if (ImGui::MenuItem("Releases on GitHub")) OpenInBrowser(kAppReleasesUrl);
+        ImGui::Separator();
         if (ImGui::MenuItem("About")) m_showAbout = true;
         ImGui::EndMenu();
     }
@@ -660,6 +676,50 @@ void Application::DrawSettingsPanel() {
         ImGui::TextDisabled("Effective scale: %.2fx   (Ctrl +/- , Ctrl+0)", EffectiveUiScale());
     }
 
+    if (ImGui::CollapsingHeader("Updates")) {
+        ImGui::Text("Version %s", kAppVersion);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%s)", IsPortableBuild() ? "portable" : "installed");
+
+        if (ImGui::Checkbox("Check on start-up", &m_checkUpdatesOnStartup)) {
+            ImGui::MarkIniSettingsDirty();
+        }
+        HelpMarker("Asks GitHub once per launch whether a newer release exists. Nothing is "
+                   "downloaded until you say so, and no information about you is sent.");
+
+        ImGui::BeginDisabled(m_updater.Busy());
+        if (ImGui::Button("Check now", ImVec2(-FLT_MIN, 0.0f))) CheckForUpdates(true);
+        ImGui::EndDisabled();
+
+        switch (m_updateState) {
+            case UpdateState::Checking:
+                ImGui::TextDisabled("Checking...");
+                break;
+            case UpdateState::UpToDate:
+                ImGui::TextDisabled("Up to date.");
+                break;
+            case UpdateState::Available:
+            case UpdateState::Downloading:
+            case UpdateState::ReadyToInstall:
+                if (ImGui::SmallButton("Show update")) m_openUpdatePopup = true;
+                break;
+            case UpdateState::Failed:
+                ImGui::TextDisabled("Last check failed.");
+                break;
+            default:
+                break;
+        }
+
+        if (!m_skippedUpdateVersion.empty()) {
+            ImGui::TextDisabled("Skipping %s", m_skippedUpdateVersion.c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Clear")) {
+                m_skippedUpdateVersion.clear();
+                ImGui::MarkIniSettingsDirty();
+            }
+        }
+    }
+
     if (ImGui::CollapsingHeader("Import", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SetNextItemWidth(-110.0f);
         ImGui::SliderFloat("Bake rate", &m_importOptions.sampleRate, 5.0f, 120.0f, "%.0f fps");
@@ -871,6 +931,131 @@ void Application::DrawDiscardPopup() {
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(100.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         m_pendingAction = PendingAction::None;
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+}
+
+void Application::DrawUpdatePopup() {
+    if (m_openUpdatePopup) {
+        ImGui::OpenPopup("Update available##update");
+        m_openUpdatePopup = false;
+    }
+
+    CenterNextPopup();
+    ImGui::SetNextWindowSizeConstraints(ImVec2(480.0f, 0.0f), ImVec2(620.0f, FLT_MAX));
+    if (!ImGui::BeginPopupModal("Update available##update", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+
+    const ReleaseInfo release = m_updater.Release();
+    const UpdateState state = m_updater.State();
+    const bool portable = IsPortableBuild();
+
+    ImGui::Text("Version %s is available.", release.version.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("(this is %s)", kAppVersion);
+
+    if (!release.notes.empty()) {
+        ImGui::Spacing();
+        ImGui::SeparatorText("What changed");
+        // The notes are whatever the release carries, so they get a fixed box with
+        // its own scrollbar rather than being allowed to size the dialog.
+        ImGui::BeginChild("##notes", ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * 8.0f),
+                          ImGuiChildFlags_Borders);
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextUnformatted(release.notes.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+    }
+
+    ImGui::Spacing();
+
+    if (state == UpdateState::Downloading) {
+        const float progress = m_updater.Progress();
+        if (progress < 0.0f) {
+            // No content length came back, so there is no fraction to show.
+            ImGui::ProgressBar(-1.0f * static_cast<float>(ImGui::GetTime()),
+                               ImVec2(-FLT_MIN, 0.0f), "Downloading...");
+        } else {
+            ImGui::ProgressBar(progress, ImVec2(-FLT_MIN, 0.0f));
+        }
+        ImGui::Spacing();
+        if (ImGui::Button("Hide", ImVec2(140.0f, 0.0f))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
+
+    if (state == UpdateState::ReadyToInstall) {
+        ImGui::TextWrapped("The installer is downloaded. Installing closes this window and "
+                           "reopens it on the new version.");
+        if (m_unsavedChanges) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.98f, 0.75f, 0.30f, 1.0f),
+                               "Export your merged clips first - they are not saved anywhere.");
+        }
+        ImGui::Spacing();
+        ImGui::BeginDisabled(m_unsavedChanges);
+        if (ImGui::Button("Install and restart", ImVec2(180.0f, 0.0f))) {
+            if (m_updater.LaunchInstaller()) {
+                ImGui::CloseCurrentPopup();
+                RequestAction(PendingAction::Quit);
+            }
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Later", ImVec2(120.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+        return;
+    }
+
+    if (state == UpdateState::Failed) {
+        ImGui::TextColored(ImVec4(0.95f, 0.42f, 0.42f, 1.0f), "Update failed: %s",
+                           m_updater.Error().c_str());
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(120.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+        return;
+    }
+
+    // A portable copy is a folder the user unzipped wherever they liked; there is
+    // no installer that owns it, so the honest move is to hand them the download.
+    const bool canInstall = !portable && !release.installerUrl.empty();
+    if (portable) {
+        ImGui::TextWrapped("This is a portable copy, so it cannot update itself. Download the "
+                           "new portable zip and unpack it over this folder.");
+    } else if (release.installerUrl.empty()) {
+        ImGui::TextWrapped("That release ships no installer. Download it from the release page.");
+    }
+
+    ImGui::Spacing();
+    if (canInstall) {
+        if (ImGui::Button("Download and install", ImVec2(180.0f, 0.0f))) {
+            // Whatever started the check, the download is the user's own doing, so
+            // anything that goes wrong from here is worth reporting loudly.
+            m_updater.SetUserInitiated(true);
+            m_updater.DownloadAsync();
+        }
+        ImGui::SameLine();
+    } else {
+        const std::string& url = portable && !release.portableUrl.empty() ? release.portableUrl
+                                                                          : release.pageUrl;
+        if (ImGui::Button("Open download page", ImVec2(180.0f, 0.0f))) OpenInBrowser(url);
+        ImGui::SameLine();
+    }
+    if (ImGui::Button("Skip this version", ImVec2(150.0f, 0.0f))) {
+        m_skippedUpdateVersion = release.version;
+        ImGui::MarkIniSettingsDirty();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Later", ImVec2(100.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         ImGui::CloseCurrentPopup();
     }
 

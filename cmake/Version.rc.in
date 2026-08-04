@@ -1,0 +1,31 @@
+// Generated from cmake/Version.rc.in - see cmake/Version.cmake.
+#include <winver.h>
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION    @FAM_VERSION_MAJOR@,@FAM_VERSION_MINOR@,@FAM_VERSION_PATCH@,0
+PRODUCTVERSION @FAM_VERSION_MAJOR@,@FAM_VERSION_MINOR@,@FAM_VERSION_PATCH@,0
+FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+FILEFLAGS      0x0L
+FILEOS         VOS_NT_WINDOWS32
+FILETYPE       VFT_APP
+FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"  // US English, Unicode
+        BEGIN
+            VALUE "CompanyName",      "doctorspider42"
+            VALUE "FileDescription",  "@FAM_RC_DESCRIPTION@"
+            VALUE "FileVersion",      "@FAM_VERSION@"
+            VALUE "InternalName",     "@FAM_RC_FILENAME@"
+            VALUE "LegalCopyright",   "MIT licensed. See LICENSE."
+            VALUE "OriginalFilename", "@FAM_RC_FILENAME@"
+            VALUE "ProductName",      "FBX Animation Merger"
+            VALUE "ProductVersion",   "@FAM_VERSION@ (@FAM_COMMIT@)"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

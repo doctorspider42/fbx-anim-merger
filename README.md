@@ -14,9 +14,18 @@ nothing proprietary, nothing paid.
 The same pipeline is also a command-line tool, `fam-cli` — see
 [Command line](#command-line) — so merges can be batched or scripted.
 
-**[Download the latest Windows build](https://github.com/doctorspider42/fbx-anim-merger/releases/download/latest/FbxAnimMerger-windows-x64.zip)**
-— statically linked `.exe`s, no runtime to install. Every green build of
-`main` refreshes it; see [all releases](https://github.com/doctorspider42/fbx-anim-merger/releases).
+**[Download the latest release](https://github.com/doctorspider42/fbx-anim-merger/releases/latest)**
+— two ways to get it, both statically linked with no runtime to install:
+
+- `FbxAnimMerger-<version>-setup.exe` — a per-user installer (no admin prompt)
+  that puts the app in `%LOCALAPPDATA%\Programs\FbxAnimMerger`, adds Start menu
+  entries and can put `fam-cli` on your `PATH`. Installed copies **update
+  themselves** from GitHub.
+- `FbxAnimMerger-<version>-windows-x64-portable.zip` — unzip and run, nothing
+  written outside the folder.
+
+Every green build of `main` publishes a new version; see
+[all releases](https://github.com/doctorspider42/fbx-anim-merger/releases).
 
 ---
 
@@ -178,6 +187,57 @@ switch to ignore the system value entirely. Both are saved to
 Fonts are re-rasterised at the new size rather than bitmap-stretched, so text stays
 sharp at any scale.
 
+## Versions and updates
+
+### How versions are numbered
+
+`MAJOR.MINOR.PATCH`, where the patch component is **the number of commits on the
+branch**. [`VERSION`](VERSION) at the repository root holds `MAJOR.MINOR` and is
+the only part anyone edits by hand.
+
+That makes the number both automatic and monotonic: every push to `main` is a new
+commit, so it is a new version, and it is always higher than the one before it —
+which is exactly what the updater's comparison needs. Bumping `MAJOR.MINOR` does
+not disturb the ordering, because the commit count only ever grows.
+
+CI derives the same number, hands it to CMake as `-DFAM_VERSION=`, and publishes a
+GitHub release tagged `v<version>` for every green build of `main`. Pushing a `v*`
+tag by hand releases that exact number instead. The version reaches the code as a
+generated `util/Version.h` and is compiled into both `.exe`s as a Windows
+`VERSIONINFO` resource, so Explorer's property sheet and `fam-cli --version` agree
+with the release it came from.
+
+### Installer and portable build
+
+Both ship from the same binaries and differ in exactly one file.
+
+The installer ([`installer/FbxAnimMerger.iss`](installer/FbxAnimMerger.iss), built
+with [Inno Setup](https://jrsoftware.org/isinfo.php)) installs **per user** into
+`%LOCALAPPDATA%\Programs\FbxAnimMerger`. That is deliberate rather than
+`Program Files`: it is what lets the application replace itself without a UAC
+prompt, which is the whole point of shipping an updater. There is no all-users
+option for the same reason. Optional tasks add a desktop icon and put `fam-cli` on
+the user's `PATH`; uninstalling removes both.
+
+The portable zip carries a `PORTABLE` marker file next to the `.exe`. The
+application looks for it at startup, and finding it, never tries to update itself
+in place — an unzipped folder is not something an installer owns.
+
+### Updating
+
+Installed copies ask GitHub's releases API once per launch whether anything newer
+exists (`Settings > Updates` turns that off, `Help > Check for updates...` does it
+on demand). Nothing is downloaded until you say so and nothing about you is sent.
+
+When you accept, the installer for the new version is fetched to the temp
+directory and run silently; the application closes so it can be replaced, and the
+installer starts it again afterwards. If clips are merged but not yet exported,
+the install button stays disabled until you have exported them — they live only in
+memory. Portable copies are offered the new zip to download instead.
+
+Only GitHub's own hosts are accepted as download sources, so a tampered API
+response cannot point the updater at somebody else's executable.
+
 ## Building
 
 Requires CMake 3.24+ and a C++20 compiler. All dependencies are fetched
@@ -207,6 +267,24 @@ you hit the same stall, MinGW is the supported path.
 
 Both binaries land in `build/bin/`: `FbxAnimMerger` and `fam-cli`. Pass
 `-DFAM_BUILD_CLI=OFF` to skip the command-line one.
+
+### Packaging
+
+[`tools/package.ps1`](tools/package.ps1) turns a built tree into the two release
+artifacts — the portable zip and the installer — in `dist/`:
+
+```bash
+pwsh tools/package.ps1
+```
+
+It derives the version the same way CMake does, so a package always carries the
+number its binaries report. Pass `-Version 1.2.3` to pin it, or `-SkipInstaller`
+to build only the zip.
+
+Building the installer needs Inno Setup's command-line compiler. The script looks
+for `ISCC.exe` in `%LOCALAPPDATA%\Programs\Inno Setup 7` first (where the current
+per-user install puts it), then the older and machine-wide locations, then `PATH`;
+`$env:ISCC` overrides all of them.
 
 ### Self-test
 

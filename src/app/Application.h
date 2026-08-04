@@ -11,6 +11,7 @@
 #include "render/Camera.h"
 #include "render/GpuModel.h"
 #include "render/Renderer.h"
+#include "update/Updater.h"
 
 struct GLFWwindow;
 
@@ -43,6 +44,12 @@ private:
     void ResetPlayback();
     void FrameCamera();
 
+    // -------------------------------------------------------------- updates
+    void CheckForUpdates(bool userInitiated);
+    // Turns the worker thread's state changes into log lines and popups. Called
+    // once per frame; returns immediately while a check is still in flight.
+    void PollUpdater();
+
     const Animation* CurrentAnimation() const;
 
     // -------------------------------------------------------------------- UI
@@ -57,6 +64,7 @@ private:
     void DrawLogPanel();
     void DrawExportPopup();
     void DrawDiscardPopup();
+    void DrawUpdatePopup();
     void ApplyStyle();
 
     // Interface scaling
@@ -97,6 +105,16 @@ private:
     bool m_unsavedChanges = false;
     PendingAction m_pendingAction = PendingAction::None;
     bool m_openDiscardPopup = false;
+
+    // Updates. The check runs on a worker thread; PollUpdater watches for the
+    // state it lands on, which is why the previous one is kept here.
+    Updater m_updater;
+    UpdateState m_updateState = UpdateState::Idle;
+    bool m_checkUpdatesOnStartup = true;
+    bool m_startupCheckDone = false;
+    bool m_openUpdatePopup = false;
+    // A version the user dismissed; suppresses the popup until a newer one appears.
+    std::string m_skippedUpdateVersion;
 
     // Windows reports its display scaling through the window content scale. Without
     // honouring it the whole interface renders 1:1 in pixels and is physically half

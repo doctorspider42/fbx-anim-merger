@@ -20,6 +20,7 @@
 #include "gl/GL.h"
 #include "util/FileDialog.h"
 #include "util/Log.h"
+#include "util/Version.h"
 
 namespace fs = std::filesystem;
 
@@ -37,6 +38,8 @@ const std::vector<FileFilter> kFbxFilters = {{"FBX scene", "fbx"}};
 int Application::Run() {
     // Opened before anything else so a failure during start-up still leaves a trace.
     Log::Get().OpenFile("fbx-anim-merger.log");
+    LogInfo("%s %s (%s), %s build.", kAppName, kAppVersion, kAppCommit,
+            IsPortableBuild() ? "portable" : "installed");
 
     if (!Initialize()) {
         Shutdown();
@@ -141,11 +144,16 @@ bool Application::Initialize() {
                                const char* line) {
         auto* app = static_cast<Application*>(entry);
         float zoom = 0.0f;
-        int follow = 0;
+        int flag = 0;
+        char text[64] = {};
         if (std::sscanf(line, "Zoom=%f", &zoom) == 1) {
             app->m_uiZoom = std::clamp(zoom, 0.5f, 3.0f);
-        } else if (std::sscanf(line, "FollowSystemDpi=%d", &follow) == 1) {
-            app->m_followSystemDpi = follow != 0;
+        } else if (std::sscanf(line, "FollowSystemDpi=%d", &flag) == 1) {
+            app->m_followSystemDpi = flag != 0;
+        } else if (std::sscanf(line, "CheckUpdatesOnStartup=%d", &flag) == 1) {
+            app->m_checkUpdatesOnStartup = flag != 0;
+        } else if (std::sscanf(line, "SkipUpdateVersion=%63s", text) == 1) {
+            app->m_skippedUpdateVersion = text;
         }
     };
     uiSettings.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* handler,
@@ -153,7 +161,12 @@ bool Application::Initialize() {
         auto* app = static_cast<Application*>(handler->UserData);
         out->appendf("[%s][Settings]\n", handler->TypeName);
         out->appendf("Zoom=%.3f\n", static_cast<double>(app->m_uiZoom));
-        out->appendf("FollowSystemDpi=%d\n\n", app->m_followSystemDpi ? 1 : 0);
+        out->appendf("FollowSystemDpi=%d\n", app->m_followSystemDpi ? 1 : 0);
+        out->appendf("CheckUpdatesOnStartup=%d\n", app->m_checkUpdatesOnStartup ? 1 : 0);
+        if (!app->m_skippedUpdateVersion.empty()) {
+            out->appendf("SkipUpdateVersion=%s\n", app->m_skippedUpdateVersion.c_str());
+        }
+        out->appendf("\n");
     };
     ImGui::AddSettingsHandler(&uiSettings);
 
@@ -227,6 +240,14 @@ void Application::Frame(float deltaSeconds) {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+
+    // NewFrame is where ImGui reads the ini back, so the preference below is only
+    // trustworthy from here on - hence the check waiting until after the first one.
+    if (!m_startupCheckDone) {
+        m_startupCheckDone = true;
+        if (m_checkUpdatesOnStartup) CheckForUpdates(false);
+    }
+    PollUpdater();
 
     DrawUi();
 
@@ -471,6 +492,61 @@ void Application::RunExport() {
                fs::path(path).filename().string().c_str(), result.meshCount, result.animationCount,
                static_cast<double>(options.scale));
     m_statusText = "Exported " + fs::path(path).filename().string();
+}
+
+void Application::CheckForUpdates(bool userInitiated) {
+    if (m_updater.Busy()) return;
+    m_updater.SetUserInitiated(userInitiated);
+    if (userInitiated) {
+        // An explicit check means the user wants an answer about *this* version,
+        // whatever they dismissed last time.
+        m_skippedUpdateVersion.clear();
+        ImGui::MarkIniSettingsDirty();
+        m_statusText = "Checking for updates...";
+    }
+    m_updateState = UpdateState::Idle;
+    m_updater.CheckAsync();
+}
+
+void Application::PollUpdater() {
+    const UpdateState state = m_updater.State();
+    if (state == m_updateState) return;
+    m_updateState = state;
+
+    switch (state) {
+        case UpdateState::Available: {
+            const ReleaseInfo release = m_updater.Release();
+            LogInfo("Version %s is available; this is %s.", release.version.c_str(), kAppVersion);
+            // A silent start-up check stays out of the way for a version the user
+            // already said no to. Anything newer than that gets to ask again.
+            if (CompareVersions(release.version, m_skippedUpdateVersion) > 0) {
+                m_openUpdatePopup = true;
+            }
+            m_statusText = "Version " + release.version + " is available.";
+            break;
+        }
+        case UpdateState::UpToDate:
+            if (m_updater.UserInitiated()) {
+                LogSuccess("Up to date - %s is the newest release.", kAppVersion);
+                m_statusText = "Up to date.";
+            }
+            break;
+        case UpdateState::ReadyToInstall:
+            LogSuccess("Update downloaded.");
+            m_openUpdatePopup = true;
+            break;
+        case UpdateState::Failed:
+            // A machine that is simply offline should not open with an error box.
+            if (m_updater.UserInitiated()) {
+                LogError("Update failed: %s", m_updater.Error().c_str());
+                m_statusText = "Update failed - see the log.";
+            } else {
+                LogInfo("Update check skipped: %s", m_updater.Error().c_str());
+            }
+            break;
+        default:
+            break;
+    }
 }
 
 }  // namespace fam

@@ -1,0 +1,21 @@
+// Generated from cmake/Version.h.in - see cmake/Version.cmake. Do not edit.
+#pragma once
+
+namespace fam {
+
+inline constexpr const char* kAppName = "FBX Animation Merger";
+
+// MAJOR.MINOR.PATCH, where PATCH is the commit count. Strictly increasing across
+// pushes to main, which is what Updater's comparison relies on.
+inline constexpr const char* kAppVersion = "@FAM_VERSION@";
+inline constexpr int kAppVersionMajor = @FAM_VERSION_MAJOR@;
+inline constexpr int kAppVersionMinor = @FAM_VERSION_MINOR@;
+inline constexpr int kAppVersionPatch = @FAM_VERSION_PATCH@;
+
+inline constexpr const char* kAppCommit = "@FAM_COMMIT@";
+
+// "owner/name". The updater builds every GitHub URL it needs from this.
+inline constexpr const char* kAppRepository = "@FAM_REPOSITORY@";
+inline constexpr const char* kAppReleasesUrl = "https://github.com/@FAM_REPOSITORY@/releases";
+
+}  // namespace fam
