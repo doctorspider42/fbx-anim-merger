@@ -419,6 +419,21 @@ ExportResult ExportModel(const Model& source, const std::string& path, const Exp
     if (!options.includeGeometry) {
         model.meshes.clear();
     }
+
+    std::vector<int> animIndices = options.animations;
+    if (animIndices.empty()) {
+        animIndices.resize(model.animations.size());
+        for (size_t i = 0; i < animIndices.size(); ++i) animIndices[i] = static_cast<int>(i);
+    }
+
+    if (options.sampleRate > 0.0f) {
+        for (int index : animIndices) {
+            if (index >= 0 && index < static_cast<int>(model.animations.size())) {
+                ResampleAnimation(model.animations[static_cast<size_t>(index)], options.sampleRate);
+            }
+        }
+    }
+
     ApplyScale(model, options.scale);
     DropOrphanedMeshNodes(model);
 
@@ -427,12 +442,6 @@ ExportResult ExportModel(const Model& source, const std::string& path, const Exp
     // (glTF2Exporter.cpp, "Flip UV y coords"). Flipping first cancels it out and
     // ships upside-down textures. Its FBX exporter does no such thing, so passing
     // the FBX-convention coordinates straight through is correct for both targets.
-
-    std::vector<int> animIndices = options.animations;
-    if (animIndices.empty()) {
-        animIndices.resize(model.animations.size());
-        for (size_t i = 0; i < animIndices.size(); ++i) animIndices[i] = static_cast<int>(i);
-    }
 
     aiScene scene;
     scene.mName.Set("FbxAnimMerger");
@@ -444,6 +453,21 @@ ExportResult ExportModel(const Model& source, const std::string& path, const Exp
     const double unitScaleFactor = 100.0 / static_cast<double>(std::max(options.scale, 1.0e-6f));
     scene.mMetaData->Add("UnitScaleFactor", unitScaleFactor);
     scene.mMetaData->Add("OriginalUnitScaleFactor", unitScaleFactor);
+
+    // Assimp otherwise hard-codes FBX TimeMode 11 (24 fps), even when every
+    // aiAnimation says 30 or 60. Curves still contain valid seconds, but engines
+    // that snap them to the declared FBX frame grid periodically sample between
+    // the wrong keys. Declare the actual output rate as a custom FBX frame rate.
+    double outputRate = 30.0;
+    for (int index : animIndices) {
+        if (index >= 0 && index < static_cast<int>(model.animations.size())) {
+            outputRate = model.animations[static_cast<size_t>(index)].sampleRate;
+            break;
+        }
+    }
+    const int customTimeMode = 14;
+    scene.mMetaData->Add("TimeMode", customTimeMode);
+    scene.mMetaData->Add("CustomFrameRate", outputRate);
 
     // -------------------------------------------------------------- materials
     const size_t materialCount = std::max<size_t>(model.materials.size(), 1);

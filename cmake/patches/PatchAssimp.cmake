@@ -123,3 +123,40 @@ fam_patch_file(
     "ids[2], \"S\", S, \"Lcl Scale\""
     "ids[2], \"S\", S, \"Lcl Scaling\""
     "fbx-scale-curve-property-name")
+
+# ---------------------------------------------------------------------------
+# 5. FBX stores rotation curves as Euler components, but assimp converts every
+# quaternion key independently. Equivalent angles therefore jump between eg.
+# +170 and -170 degrees. FBX readers linearly interpolate those components through
+# zero, producing a nearly full-turn limb excursion between two adjacent keys.
+# Unwrap each component to the nearest equivalent angle before writing the curve.
+# ---------------------------------------------------------------------------
+fam_patch_file(
+    "code/AssetLib/FBX/FBXExporter.cpp"
+    "while (qr.z - previous_rotation.z < -180.0f)"
+    "            times.clear(); xval.clear(); yval.clear(); zval.clear();
+            for (size_t ki = 0; ki < na->mNumRotationKeys; ++ki) {"
+    "            times.clear(); xval.clear(); yval.clear(); zval.clear();
+            aiVector3D previous_rotation;
+            bool have_previous_rotation = false;
+            for (size_t ki = 0; ki < na->mNumRotationKeys; ++ki) {"
+    "fbx-euler-curve-continuity-setup")
+
+fam_patch_file(
+    "code/AssetLib/FBX/FBXExporter.cpp"
+    "previous_rotation = qr;"
+    "                qr = AI_RAD_TO_DEG(qr);
+                xval.push_back(qr.x);"
+    "                qr = AI_RAD_TO_DEG(qr);
+                if (have_previous_rotation) {
+                    while (qr.x - previous_rotation.x > 180.0f) qr.x -= 360.0f;
+                    while (qr.x - previous_rotation.x < -180.0f) qr.x += 360.0f;
+                    while (qr.y - previous_rotation.y > 180.0f) qr.y -= 360.0f;
+                    while (qr.y - previous_rotation.y < -180.0f) qr.y += 360.0f;
+                    while (qr.z - previous_rotation.z > 180.0f) qr.z -= 360.0f;
+                    while (qr.z - previous_rotation.z < -180.0f) qr.z += 360.0f;
+                }
+                previous_rotation = qr;
+                have_previous_rotation = true;
+                xval.push_back(qr.x);"
+    "fbx-euler-curve-continuity")

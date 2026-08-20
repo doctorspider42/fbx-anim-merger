@@ -1,6 +1,7 @@
 #include "core/Model.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -115,6 +116,86 @@ void NormalizeAnimation(Animation& anim) {
         if (!track.scales.empty()) duration = std::max(duration, track.scales.back().time);
     }
     anim.duration = std::max(anim.duration, duration);
+}
+
+namespace {
+
+template <typename T, typename Mix>
+std::vector<Key<T>> ResampleKeys(const std::vector<Key<T>>& source,
+                                 const std::vector<float>& times, Mix mix) {
+    if (source.size() <= 1) {
+        std::vector<Key<T>> result = source;
+        if (!result.empty()) result[0].time = 0.0f;
+        return result;
+    }
+
+    std::vector<Key<T>> result;
+    result.reserve(times.size());
+    size_t cursor = 0;
+    for (float time : times) {
+        while (cursor + 1 < source.size() && source[cursor + 1].time <= time) ++cursor;
+
+        T value = source.back().value;
+        if (cursor + 1 < source.size()) {
+            const Key<T>& a = source[cursor];
+            const Key<T>& b = source[cursor + 1];
+            const float span = b.time - a.time;
+            const float blend = span > 1.0e-8f
+                                    ? glm::clamp((time - a.time) / span, 0.0f, 1.0f)
+                                    : 0.0f;
+            value = mix(a.value, b.value, blend);
+        }
+        result.push_back({time, value});
+    }
+    return result;
+}
+
+}  // namespace
+
+void ResampleAnimation(Animation& anim, float sampleRate) {
+    if (!std::isfinite(sampleRate)) return;
+    sampleRate = glm::clamp(sampleRate, kMinAnimationSampleRate, kMaxAnimationSampleRate);
+
+    NormalizeAnimation(anim);
+    const float duration = std::max(anim.duration, 0.0f);
+    anim.sampleRate = sampleRate;
+    if (duration <= 0.0f) return;
+
+    // Keep a regular 1/FPS grid, then retain the exact source endpoint when the
+    // duration is not an integer number of output frames. No key may sit beyond
+    // mDuration: several FBX consumers behave badly when that invariant is broken.
+    const int wholeFrames = static_cast<int>(std::floor(duration * sampleRate + 1.0e-5f));
+    std::vector<float> times;
+    times.reserve(static_cast<size_t>(wholeFrames) + 2);
+    for (int frame = 0; frame <= wholeFrames; ++frame) {
+        times.push_back(static_cast<float>(frame) / sampleRate);
+    }
+    if (times.empty() || duration - times.back() > 1.0e-5f) times.push_back(duration);
+    else times.back() = duration;
+
+    for (NodeTrack& track : anim.tracks) {
+        track.positions = ResampleKeys(track.positions, times,
+                                      [](const glm::vec3& a, const glm::vec3& b, float t) {
+                                          return glm::mix(a, b, t);
+                                      });
+        track.scales = ResampleKeys(track.scales, times,
+                                   [](const glm::vec3& a, const glm::vec3& b, float t) {
+                                       return glm::mix(a, b, t);
+                                   });
+        track.rotations = ResampleKeys(track.rotations, times,
+                                      [](const glm::quat& a, const glm::quat& b, float t) {
+                                          return glm::normalize(glm::slerp(a, b, t));
+                                      });
+
+        // q and -q encode the same rotation. Keeping one hemisphere prevents an
+        // exporter or engine from interpolating the equivalent values the long way.
+        for (size_t i = 1; i < track.rotations.size(); ++i) {
+            if (glm::dot(track.rotations[i - 1].value, track.rotations[i].value) < 0.0f) {
+                track.rotations[i].value = -track.rotations[i].value;
+            }
+        }
+    }
+    anim.duration = duration;
 }
 
 }  // namespace fam

@@ -52,10 +52,11 @@ Every green build of `main` publishes a new version; see
 - **Merge report** — how many tracks bound, how many were dropped, and exactly
   which node names failed to match. No silent partial merges.
 - **Preview** — GPU-skinned playback on the base model with a timeline, scrub,
-  loop, playback speed, bind-pose toggle and a skeleton overlay.
+  loop, playback speed, editable per-clip FPS, bind-pose toggle and a skeleton overlay.
 - **Rename** — double-click a clip; names are kept unique automatically.
 - **Export** — FBX (binary 7.4 or ASCII) and glTF 2.0 (`.glb` or `.gltf`+`.bin`),
-  with per-clip selection, unit scaling and optional texture embedding.
+  with per-clip selection, an optional output-FPS override, unit scaling and optional
+  texture embedding.
 
 ## Design notes
 
@@ -69,7 +70,7 @@ rate (30 fps by default) instead of trying to preserve every DCC's tangent model
 FBX that usually go wrong — pre/post rotations, geometric transforms, unit and
 axis conversion, skin clusters.
 
-**Export uses [Assimp](https://github.com/assimp/assimp)** as a writer only. Four
+**Export uses [Assimp](https://github.com/assimp/assimp)** as a writer only. Five
 bugs in 5.4.3 are fixed by small patches applied at configure time — see
 [`cmake/patches/PatchAssimp.cmake`](cmake/patches/PatchAssimp.cmake):
 
@@ -80,7 +81,9 @@ bugs in 5.4.3 are fixed by small patches applied at configure time — see
 - its FBX exporter throws away the inverse bind matrices and reconstructs the bind
   pose from the rest pose, which shreds any rig whose two differ (see below);
 - its FBX exporter links scaling curves to a property named `Lcl Scale` rather than
-  `Lcl Scaling`, so animated scale is silently dropped by every reader.
+  `Lcl Scaling`, so animated scale is silently dropped by every reader;
+- its FBX exporter converts quaternion keys to independent Euler representations,
+  so a harmless angle wrap can interpolate a limb through almost a full turn.
 
 ### Bind pose vs rest pose
 

@@ -62,10 +62,10 @@ void CenterNextPopup() {
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 }
 
-std::string FormatDuration(float seconds, float rate) {
+std::string FormatDuration(const Animation& animation) {
     char buffer[64];
-    std::snprintf(buffer, sizeof(buffer), "%.2fs / %d f", static_cast<double>(seconds),
-                  static_cast<int>(seconds * rate + 0.5f) + 1);
+    std::snprintf(buffer, sizeof(buffer), "%.2fs / %d f",
+                  static_cast<double>(animation.duration), animation.FrameCount());
     return buffer;
 }
 
@@ -592,7 +592,7 @@ void Application::DrawAnimationPanel() {
             }
 
             ImGui::TableNextColumn();
-            ImGui::TextDisabled("%s", FormatDuration(anim.duration, anim.sampleRate).c_str());
+            ImGui::TextDisabled("%s", FormatDuration(anim).c_str());
 
             ImGui::PopID();
         }
@@ -607,7 +607,10 @@ void Application::DrawAnimationPanel() {
 void Application::DrawTimeline() {
     ImGui::Begin(kTimelineWindow);
 
-    const Animation* animation = CurrentAnimation();
+    Animation* animation =
+        m_currentAnimation >= 0 && m_currentAnimation < static_cast<int>(m_model.animations.size())
+            ? &m_model.animations[static_cast<size_t>(m_currentAnimation)]
+            : nullptr;
     const bool active = animation != nullptr && !m_bindPose;
 
     ImGui::BeginDisabled(!active);
@@ -640,13 +643,29 @@ void Application::DrawTimeline() {
         m_playing = false;
     }
 
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(200.0f);
-    ImGui::BeginDisabled(true);
-    float displayRate = rate;
-    ImGui::SliderFloat("##rate", &displayRate, 1.0f, 120.0f, "baked at %.0f fps");
     ImGui::EndDisabled();
 
+    ImGui::SameLine();
+    ImGui::BeginDisabled(animation == nullptr);
+    ImGui::SetNextItemWidth(200.0f);
+    float editedRate = rate;
+    const bool rateEntered = ImGui::InputFloat("##rate", &editedRate, 1.0f, 10.0f,
+                                               "%.0f fps",
+                                               ImGuiInputTextFlags_EnterReturnsTrue);
+    if ((rateEntered || ImGui::IsItemDeactivatedAfterEdit()) && animation) {
+        editedRate = std::clamp(editedRate, kMinAnimationSampleRate, kMaxAnimationSampleRate);
+        if (std::fabs(editedRate - animation->sampleRate) > 1.0e-4f) {
+            const float oldRate = animation->sampleRate;
+            ResampleAnimation(*animation, editedRate);
+            m_playhead = std::min(m_playhead, animation->duration);
+            m_pose.InvalidateBinding();
+            m_unsavedChanges = true;
+            LogSuccess("Resampled '%s' from %.3g to %.3g fps.", animation->name.c_str(),
+                       static_cast<double>(oldRate), static_cast<double>(animation->sampleRate));
+        }
+    }
+    HelpMarker("Type an FPS value and press Enter (or click elsewhere). The loaded clip is "
+               "resampled immediately, so preview and export use the new frame rate.");
     ImGui::EndDisabled();
 
     if (!active) {
@@ -722,9 +741,17 @@ void Application::DrawSettingsPanel() {
 
     if (ImGui::CollapsingHeader("Import", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SetNextItemWidth(-110.0f);
-        ImGui::SliderFloat("Bake rate", &m_importOptions.sampleRate, 5.0f, 120.0f, "%.0f fps");
+        const bool rateEntered = ImGui::InputFloat("Bake rate", &m_importOptions.sampleRate,
+                                                   1.0f, 10.0f, "%.0f fps",
+                                                   ImGuiInputTextFlags_EnterReturnsTrue);
+        if (rateEntered || ImGui::IsItemDeactivatedAfterEdit()) {
+            m_importOptions.sampleRate =
+                std::clamp(m_importOptions.sampleRate, kMinAnimationSampleRate,
+                           kMaxAnimationSampleRate);
+        }
         HelpMarker("Curves from every source file are resampled at this rate. Higher is more "
-                   "faithful for fast motion, lower keeps files small. Applies to the next import.");
+                   "faithful for fast motion, lower keeps files small. This is the default for "
+                   "future imports; a loaded clip's FPS can also be edited in the Timeline.");
     }
 
     if (ImGui::CollapsingHeader("Merging", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -1103,6 +1130,30 @@ void Application::DrawExportPopup() {
     HelpMarker("Turn off to write an animation-only file.");
     ImGui::Checkbox("Embed textures", &m_exportOptions.embedTextures);
 
+    bool overrideRate = m_exportOptions.sampleRate > 0.0f;
+    if (ImGui::Checkbox("Override clip FPS on export", &overrideRate)) {
+        if (overrideRate) {
+            const Animation* current = CurrentAnimation();
+            m_exportOptions.sampleRate =
+                current ? current->sampleRate : m_importOptions.sampleRate;
+        } else {
+            m_exportOptions.sampleRate = 0.0f;
+        }
+    }
+    ImGui::BeginDisabled(!overrideRate);
+    float exportRate = overrideRate ? m_exportOptions.sampleRate : m_importOptions.sampleRate;
+    ImGui::SetNextItemWidth(-140.0f);
+    const bool exportRateEntered = ImGui::InputFloat("Output FPS", &exportRate, 1.0f, 10.0f,
+                                                     "%.0f fps",
+                                                     ImGuiInputTextFlags_EnterReturnsTrue);
+    if (overrideRate && (exportRateEntered || ImGui::IsItemDeactivatedAfterEdit())) {
+        m_exportOptions.sampleRate =
+            std::clamp(exportRate, kMinAnimationSampleRate, kMaxAnimationSampleRate);
+    }
+    ImGui::EndDisabled();
+    HelpMarker("Resamples selected clips in the exported file only. With the override off, each "
+               "clip keeps the FPS shown in the Timeline.");
+
     ImGui::SeparatorText("Clips");
     int selected = 0;
     for (const Animation& anim : m_model.animations) {
@@ -1121,7 +1172,7 @@ void Application::DrawExportPopup() {
             ImGui::PushID(i);
             ImGui::Checkbox(anim.name.c_str(), &anim.exportSelected);
             ImGui::SameLine();
-            ImGui::TextDisabled("%s", FormatDuration(anim.duration, anim.sampleRate).c_str());
+            ImGui::TextDisabled("%s", FormatDuration(anim).c_str());
             ImGui::PopID();
         }
     }

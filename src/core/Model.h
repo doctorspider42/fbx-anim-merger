@@ -7,6 +7,7 @@
 // would never line up.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -20,6 +21,8 @@ namespace fam {
 
 inline constexpr int kMaxBoneInfluences = 4;
 inline constexpr int kMaxBones = 200;  // must match the GLSL uniform block
+inline constexpr float kMinAnimationSampleRate = 1.0f;
+inline constexpr float kMaxAnimationSampleRate = 240.0f;
 
 struct Vertex {
     glm::vec3 position{0.0f};
@@ -123,7 +126,16 @@ struct Animation {
 
     bool exportSelected = true;
 
-    int FrameCount() const { return static_cast<int>(duration * sampleRate + 0.5f) + 1; }
+    int FrameCount() const {
+        size_t count = 0;
+        for (const NodeTrack& track : tracks) {
+            count = std::max(count, track.positions.size());
+            count = std::max(count, track.rotations.size());
+            count = std::max(count, track.scales.size());
+        }
+        return count > 0 ? static_cast<int>(count)
+                         : static_cast<int>(duration * sampleRate + 0.5f) + 1;
+    }
 };
 
 struct Model {
@@ -159,5 +171,10 @@ struct Model {
 
 // Sorts keys by time and removes tracks that carry no information.
 void NormalizeAnimation(Animation& anim);
+
+// Rebuilds every non-constant channel on a new frame grid while preserving the
+// clip's duration in seconds. This changes both preview playback and the keys
+// written on export; it is not merely an FPS metadata edit.
+void ResampleAnimation(Animation& anim, float sampleRate);
 
 }  // namespace fam

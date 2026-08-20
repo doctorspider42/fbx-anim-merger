@@ -18,6 +18,7 @@
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
+#include <ufbx.h>
 
 #include "core/AnimMerge.h"
 #include "core/Export.h"
@@ -226,6 +227,15 @@ ReadBack ReadWithAssimp(const fs::path& path) {
         }
     }
     return out;
+}
+
+double ReadFbxFrameRate(const fs::path& path) {
+    ufbx_error error;
+    ufbx_scene* scene = ufbx_load_file(path.string().c_str(), nullptr, &error);
+    if (!scene) return 0.0;
+    const double rate = scene->settings.frames_per_second;
+    ufbx_free_scene(scene);
+    return rate;
 }
 
 }  // namespace
@@ -640,6 +650,69 @@ int main(int argc, char** argv) {
             Check(std::fabs(value - 2.0f) < 1.0e-3f,
                   "scale key preserved (got " + std::to_string(value) + ", expected 2)");
         }
+    }
+
+    // --------------------------------------- 11. FPS metadata and true resampling
+    std::printf("\n11. Animation FPS controls keys and FBX metadata\n");
+    {
+        Model rateModel = MakeRig("Rate", 40.0f);
+        ResampleAnimation(rateModel.animations[0], 24.0f);
+        Check(std::fabs(rateModel.animations[0].sampleRate - 24.0f) < 1.0e-4f,
+              "loaded clip rate changes to 24 fps");
+        Check(rateModel.animations[0].FrameCount() == 25,
+              "one-second clip is rebuilt as 25 keyed frames at 24 fps");
+        Check(std::fabs(rateModel.animations[0].tracks[0].rotations[1].time - 1.0f / 24.0f) <
+                  1.0e-5f,
+              "resampled keys use the 24 fps frame grid");
+
+        const fs::path rate24Fbx = dir / "rate24.fbx";
+        Check(WriteFbx(rateModel, rate24Fbx), "24 fps FBX written");
+        Check(std::fabs(ReadFbxFrameRate(rate24Fbx) - 24.0) < 1.0e-4,
+              "FBX GlobalSettings declares 24 fps");
+
+        const fs::path rate30Fbx = dir / "rate30.fbx";
+        ExportOptions rateOptions;
+        rateOptions.format = ExportFormat::FbxBinary;
+        rateOptions.scale = DefaultScaleFor(ExportFormat::FbxBinary);
+        rateOptions.sampleRate = 30.0f;
+        const ExportResult rateResult = ExportModel(rateModel, rate30Fbx.string(), rateOptions);
+        Check(rateResult.ok, "30 fps export override written");
+        Check(std::fabs(ReadFbxFrameRate(rate30Fbx) - 30.0) < 1.0e-4,
+              "FBX GlobalSettings declares overridden 30 fps");
+        Check(std::fabs(rateModel.animations[0].sampleRate - 24.0f) < 1.0e-4f &&
+                  rateModel.animations[0].FrameCount() == 25,
+              "export-only override leaves the loaded clip unchanged");
+    }
+
+    // -------------------------- 12. Euler representation stays continuous in FBX
+    std::printf("\n12. FBX rotation curves do not flip across 180 degrees\n");
+    {
+        Model crossing = MakeRig("Cross180", 0.0f);
+        NodeTrack& track = crossing.animations[0].tracks[0];
+        track.rotations = {
+            {0.0f, glm::angleAxis(glm::radians(170.0f), glm::vec3(0.0f, 0.0f, 1.0f))},
+            {1.0f, glm::angleAxis(glm::radians(190.0f), glm::vec3(0.0f, 0.0f, 1.0f))},
+        };
+
+        const fs::path crossingFbx = dir / "cross180.fbx";
+        Check(WriteFbx(crossing, crossingFbx), "180-degree crossing FBX written");
+
+        Model crossingBack;
+        ImportOptions crossingOptions = importOptions;
+        crossingOptions.sampleRate = 2.0f;
+        Check(ImportFbx(crossingFbx.string(), crossingOptions, crossingBack).ok,
+              "180-degree crossing FBX imported");
+        const NodeTrack* backTrack = crossingBack.animations.empty()
+                                         ? nullptr
+                                         : FindTrack(crossingBack.animations[0], "Bone_B");
+        const glm::quat expected =
+            glm::angleAxis(glm::radians(180.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        const float alignment = backTrack && backTrack->rotations.size() >= 3
+                                    ? std::fabs(glm::dot(backTrack->rotations[1].value, expected))
+                                    : 0.0f;
+        Check(alignment > 0.999f,
+              "midpoint follows the short 170->190 path (alignment " +
+                  std::to_string(alignment) + ")");
     }
 
     std::printf("\n%s (%d failure(s))\n", g_failures == 0 ? "ALL CHECKS PASSED" : "FAILURES", g_failures);

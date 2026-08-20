@@ -442,8 +442,12 @@ void ImportAnimations(const ufbx_scene* scene, const ImportOptions& options,
         const double end = std::max(stack->time_end, stack->time_begin);
         const double lengthSeconds = end - begin;
 
-        const int frameCount =
-            std::max(1, static_cast<int>(std::lround(lengthSeconds * static_cast<double>(rate))) + 1);
+        const int wholeFrames =
+            std::max(0, static_cast<int>(std::floor(lengthSeconds * static_cast<double>(rate) +
+                                                    1.0e-8)));
+        const double lastWholeFrame = static_cast<double>(wholeFrames) / rate;
+        const bool needsEndpoint = lengthSeconds - lastWholeFrame > 1.0e-8;
+        const int frameCount = wholeFrames + 1 + (needsEndpoint ? 1 : 0);
 
         Animation anim;
         anim.name = ToStd(stack->name);
@@ -467,10 +471,13 @@ void ImportAnimations(const ufbx_scene* scene, const ImportOptions& options,
 
             glm::quat previous(1.0f, 0.0f, 0.0f, 0.0f);
             for (int f = 0; f < frameCount; ++f) {
-                const double t = begin + static_cast<double>(f) / static_cast<double>(rate);
+                const double relativeTime =
+                    f <= wholeFrames ? static_cast<double>(f) / static_cast<double>(rate)
+                                     : lengthSeconds;
+                const double t = begin + relativeTime;
                 const ufbx_transform xf =
                     ufbx_evaluate_transform(stack->anim, node, std::min(t, end));
-                const float time = static_cast<float>(f) / rate;
+                const float time = static_cast<float>(relativeTime);
 
                 glm::quat rotation = ToGlm(xf.rotation);
                 // Keep the quaternion path continuous so slerp never takes the long way.

@@ -36,7 +36,7 @@ attribution notice) alongside the binary.
 
 ## Modifications made to dependencies
 
-Four small fixes are applied to **Assimp 5.4.3** at configure time by
+Five small fixes are applied to **Assimp 5.4.3** at configure time by
 [`cmake/patches/PatchAssimp.cmake`](cmake/patches/PatchAssimp.cmake). They are
 noted here as required by BSD 3-Clause.
 
@@ -61,6 +61,10 @@ noted here as required by BSD 3-Clause.
   Upstream connects scaling curves to a property called `Lcl Scale`; the FBX property
   is `Lcl Scaling`, so animated scale is written and then ignored by every reader.
   Fixed by using the correct name.
+- `code/AssetLib/FBX/FBXExporter.cpp`, `WriteObjects` (rotation curves). Upstream
+  converts quaternion keys to Euler angles independently, so equivalent rotations
+  can jump between positive and negative representations and interpolate through a
+  nearly full turn. Fixed by unwrapping each component against the previous key.
 
 ## Licence texts
 

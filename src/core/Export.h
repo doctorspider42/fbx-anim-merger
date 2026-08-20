@@ -24,6 +24,10 @@ struct ExportOptions {
     bool includeGeometry = true;
     bool embedTextures = false;
 
+    // Zero keeps each clip's current bake rate. A positive value resamples all
+    // selected clips in the temporary export copy, leaving the loaded model alone.
+    float sampleRate = 0.0f;
+
     // Indices into Model::animations; empty exports every clip.
     std::vector<int> animations;
 };
