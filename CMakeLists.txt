@@ -99,6 +99,13 @@ add_executable(FbxAnimMerger
     src/update/Updater.cpp
 )
 
+# The desktop front end is a native Windows GUI application.  Marking it as
+# such keeps Windows from creating a console window alongside the GLFW window.
+# fam-cli remains a regular console executable.
+if(WIN32)
+    set_target_properties(FbxAnimMerger PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+
 target_include_directories(FbxAnimMerger PRIVATE src)
 # GLFW_ICON: GLFW picks this resource up by name for the window and taskbar, so
 # the window is titled with the icon without a line of code in Application.cpp.
